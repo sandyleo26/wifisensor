@@ -411,7 +411,7 @@ void uploadData()
               shum = getHum(buffer);
               stime = getTime(buffer);
               //https://api.thingspeak.com/update?api_key=8LHRO7Q7L74WVJ07&field1=33&field2=3&created_at=2015-02-27%2012:43:00
-              data = stemp + String(F("&field2=")) + shum + String(F("&created_at=")) + stime;                        
+              data = stemp + String(F("&field2=")) + shum + String(F("&created_at=")) + stime; //+ String(F("+11:00"));                        
               Serial.println(data);
               transmitData(data);
               delay(10000);  
