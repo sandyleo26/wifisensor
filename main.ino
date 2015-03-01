@@ -11,7 +11,7 @@
 
 // RTC    ******************************
 #define BUFF_MAX 96
-char buff[BUFF_MAX];
+//char buff[BUFF_MAX];
 //int dayStart = 26, hourStart = 20, minStart = 30;    // start time: day of the month, hour, minute (values automatically assigned by the GUI)
 const uint8_t days_in_month [12] PROGMEM = { 31,28,31,30,31,30,31,31,30,31,30,31 };
 ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW) 
@@ -36,7 +36,7 @@ float temp = 0.0, hum = 0.0;
 #define NPN2 4 // D4 control DHT & SD Card
 
 // User Configuration
-unsigned long captureInt = 60, uploadInt = 90;  // in seconds
+uint16_t captureInt = 60, uploadInt = 90;  // in seconds
 
 // Low Power 
 PowerSaver chip;  // declare object for PowerSaver class
@@ -61,7 +61,7 @@ struct ts t;
 //String GET = "GET /update?key=8LHRO7Q7L74WVJ07&field1=";
 char wifiName[16]; 
 char wifiPass[16];
-char API[60];
+#define API "GET /update?key=8LHRO7Q7L74WVJ07&field1="
 
 
 //ArduinoOutStream cout(Serial);
@@ -144,7 +144,7 @@ void readUserSetting()
   ifstream sdin(configFile);
 
   if (!myFile.open(configFile, O_READ)) {
-    sd.errorHalt("sd readU");
+    sd.errorHalt("sd!");
   }
 
   while (sdin.getline(buffer, line_buffer_size, ',') || sdin.gcount()) {
@@ -157,7 +157,7 @@ void readUserSetting()
       strncpy(wifiPass, buffer, 16);
     }else if (num == 3){
       //API = (String) buffer;
-      strncpy(API, buffer, 60);
+      //strncpy(API, buffer, 60);
     }else if (num == 4){
       captureInt = atof(buffer) * 60;
     }else if (num == 5){
@@ -301,7 +301,7 @@ void testCaptureData()
     delay(1000);
     if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
     if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
-        sd.errorHalt("opening failed");
+        sd.errorHalt("sd!");
     }
     //myFile.println("testing 1, 2, 3.");
     myFile.println(str);
@@ -345,7 +345,7 @@ void captureStoreData()
     delay(1000);
     if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
     if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
-        sd.errorHalt("opening failed");
+        sd.errorHalt("sd!");
     }
     //myFile.println("testing 1, 2, 3.");
     myFile.println(str);
@@ -385,7 +385,7 @@ void uploadData()
             ifstream sdin(sdLogFile);         
 
             while (sdin.getline(buffer, line_buffer_size, '\n') || sdin.gcount()) {
-              int count = sdin.gcount();
+              //int count = sdin.gcount();
               if (sdin.fail()) {
                 //cout << "Partial long line";
                 Serial.println(F("Partial long line"));
@@ -394,7 +394,7 @@ void uploadData()
                 //cout << "Partial final line";  // sdin.fail() is false
                 Serial.println(F("Partial final line"));
               } else {
-                count--;  // Don’t include newline in count
+                //count--;  // Don’t include newline in count
                 //cout << "Line " << ++lineNum;
                 lineNum++;
                 //Serial.print(F("Line ")); Serial.println(lineNum);
@@ -409,10 +409,9 @@ void uploadData()
               //Serial.print(count); Serial.println(F(" chars: ")); Serial.println(buffer);
               stemp = getTemp(buffer);
               shum = getHum(buffer);
-              //stime = getTime(buffer);
-              //data = stemp + "&field2=" + shum + "&created_at=" + stime;
+              stime = getTime(buffer);
               //https://api.thingspeak.com/update?api_key=8LHRO7Q7L74WVJ07&field1=33&field2=3&created_at=2015-02-27%2012:43:00
-              data = stemp + "&field2=" + shum;// + "&created_at=" + stime;                        
+              data = stemp + String(F("&field2=")) + shum + String(F("&created_at=")) + stime;                        
               Serial.println(data);
               transmitData(data);
               delay(10000);  
@@ -455,20 +454,13 @@ boolean connectWiFi(){
     Serial.println(F(CONCMD1));
     delay(2000);
     //Serial.println(F(CONCMD2));
-    Serial.println(String("AT+CWJAP=\"") + String(wifiName) + String("\",\"") + String(wifiPass) + String("\""));
+    Serial.println(String(F("AT+CWJAP=\"")) + String(wifiName) + String(F("\",\"")) + String(wifiPass) + String(F("\"")));
     delay(5000);
     if (Serial.find("OK")) {
       return true;
     } else {
       return false;
     }
-}
-
-// file timestamps
-void PrintFileTimeStamp() // Print timestamps to data file. Format: year, month, day, hour, min, sec
-{ 
-  //file.timestamp(T_WRITE, RTC.year, RTC.month, RTC.day, RTC.hour, RTC.minute, RTC.second);    // edit date modified
-  //file.timestamp(T_ACCESS, RTC.year, RTC.month, RTC.day, RTC.hour, RTC.minute, RTC.second);    // edit date accessed
 }
 
 void debugPrintTime()
@@ -525,7 +517,7 @@ uint32_t getUnixTime()
 void transmitData(String data)
 {  
   //String cmd(GET);
-  String cmd(API);
+  String cmd(F(API));
   int i = 0;
 //  char buf[32];
   Serial.println(F(IPcmd));
