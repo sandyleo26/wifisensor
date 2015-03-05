@@ -12,7 +12,6 @@
 // RTC    ******************************
 #define BUFF_MAX 96
 //char buff[BUFF_MAX];
-//int dayStart = 26, hourStart = 20, minStart = 30;    // start time: day of the month, hour, minute (values automatically assigned by the GUI)
 const uint8_t days_in_month [12] PROGMEM = { 31,28,31,30,31,30,31,31,30,31,30,31 };
 ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW) 
 {
@@ -63,8 +62,6 @@ char wifiName[16];
 char wifiPass[16];
 #define API "GET /update?key=8LHRO7Q7L74WVJ07&field1="
 
-
-//ArduinoOutStream cout(Serial);
 
 // setup ****************************************************************
 void setup()
@@ -165,12 +162,6 @@ void readUserSetting()
     }   
   }
   myFile.close();
-  //debug
-//   Serial.println(wifiName);
-//    Serial.println(wifiPass);
-//     Serial.println(API);
-//      Serial.println(captureInt);
-//       Serial.println(uploadInt);
 }
 
 void initialize()
@@ -501,19 +492,6 @@ uint32_t getUnixTime()
     return rv;
 }
 
-//void makeTestFile() {
-//  ofstream sdout("GETLINE.TXT");
-//  // use flash for text to save RAM
-//  sdout << pstr(
-//    "short line\n"
-//    "\n"
-//    "17 character line\n"
-//    "too long for buffer\n"
-//    "line with no nl");
-//
-//  sdout.close();
-//}
-
 void transmitData(String data)
 {  
   //String cmd(GET);
@@ -533,12 +511,6 @@ void transmitData(String data)
   delay(5000);
   if(Serial.find(">")){
     Serial.print(cmd);
-//    while (Serial.available()) {
-//        buf[i] = Serial.read();
-//        if (buf[i] == '\r') {buf[i] = '\n';break;}
-//        i++;
-//    }
-//    Serial.println(buf);
     uploadedLines++;
   }else{
     Serial.println(F("AT+CIPCLOSE"));
@@ -633,4 +605,6 @@ void testMemSetup () {
     Serial.println(freeRam());
 }
 
-
+void nextLoop() {
+  
+}
