@@ -13,6 +13,7 @@
 // RTC    ******************************
 #define SECONDS_DAY 86400
 #define BUFF_MAX 96
+#define LINE_BUF_SIZE 160
 
 ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW) 
 {
@@ -54,7 +55,6 @@ struct ts t;
 //#define SSID "iPhone"  //change to your WIFI name
 //#define PASS "s32nzqaofv9tv"  //wifi password
 #define CONCMD1 "AT+CWMODE=1"
-//#define CONCMD2 "AT+CWJAP=\"iPhone\",\"s32nzqaofv9tv\"" // iPhone is SSID, s32*** is password
 #define IPcmd "AT+CIPSTART=\"TCP\",\"184.106.153.149\",80" // ThingSpeak IP Address: 184.106.153.149
 //String GET = "GET /update?key=8LHRO7Q7L74WVJ07&field1=";
 
@@ -347,10 +347,8 @@ void captureStoreData()
 
 void uploadData()
 {
-    String stemp, shum, stime, data;
-    int lineNum = 0;
-    const int line_buffer_size = 64;
-    char buffer[line_buffer_size];
+    uint16_t lineNum = 0, offset = 0, multilines = 0;
+    char buffer[LINE_BUF_SIZE];
     if (!initWifiSerial()) return;
 
     //Serial.println(F("connectWiFi"));
@@ -359,7 +357,7 @@ void uploadData()
         if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
         ifstream sdin(sdLogFile);         
 
-        while (sdin.getline(buffer, line_buffer_size, '\n') || sdin.gcount()) {
+        while (sdin.getline(buffer+offset, LINE_BUF_SIZE-offset, '\n') || sdin.gcount()) {
           //int count = sdin.gcount();
           if (sdin.fail()) {
             //cout << "Partial long line";
@@ -368,13 +366,22 @@ void uploadData()
           } else if (sdin.eof()) {
             //cout << "Partial final line";  // sdin.fail() is false
             //Serial.println(F("Partial final line"));
+            continue;
           } else {
             lineNum++;
           }
           if (lineNum<=uploadedLines) continue;
 
+          multilines++;
+          offset = strlen(buffer);
+
           // buffer: "133,2015-02-27,01:44:33,25.6,66.6$";
-          transmitData(buffer);
+          if (multilines == 4) {
+            if (!transmitData(buffer, multilines))
+                return;
+            multilines = 0;
+            offset = 0;
+          }
         }
     }
 }
@@ -394,7 +401,7 @@ boolean connectWiFi(){
     return true;
 }
 
-void transmitData(char* data) {  
+boolean transmitData(char* data, uint16_t lines) {  
 
     String cmd;
     int length;
@@ -403,22 +410,26 @@ void transmitData(char* data) {
     cmd = getAPI();
     length = cmd.length() + strlen(data) + 2;
 
-    if (!initDataSend(length)) return;
-
+    if (!initDataSend(length)) return false;
     while (!Serial.find(">")) {
-        if (i++>30) return;
+        if (i++>30) return false;
         Serial.println(F("AT+CIPCLOSE"));
-        if (!initWifiSerial()) return;
+        if (!initWifiSerial()) return false;
 
         if (connectWiFi()) {
-            if (!initDataSend(length)) return;
+            if (!initDataSend(length)) return false;
         }
     }
     Serial.print(cmd); Serial.print(data); Serial.print(F("\r\n"));
-    uploadedLines++;
+    //Serial.println(F("AT+CIPCLOSE"));
+    uploadedLines += lines;
+    i = 0;
+    while (!Serial.find("SEND OK"))
+        if (i++>50) break;
+    delay(1000);
     //uploadBlink();
 
-    return;
+    return true;
 }
 
 boolean initWifiSerial()
@@ -599,7 +610,7 @@ void testWiFi()
 
     //Serial.println(F("connectWiFi"));
     if (connectWiFi()) {
-        transmitData(raw);
+        transmitData(raw, 1);
     }
 }
 
