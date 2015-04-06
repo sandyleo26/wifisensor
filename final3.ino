@@ -408,7 +408,6 @@ void transmitData(char* data) {
     while (!Serial.find(">")) {
         if (i++>30) return;
         Serial.println(F("AT+CIPCLOSE"));
-        //delay(10);
         if (!initWifiSerial()) return;
 
         if (connectWiFi()) {
@@ -446,55 +445,6 @@ boolean initDataSend(int length)
     return true;
 }
 
-uint16_t getCaptureInt()
-{
-    char val;
-    int count = 0, sp = 0, ep = 0, i = 0;
-    String str;
-    val = EEPROM.read(i++);
-    while (val != '$') {
-        if (val == ',') count++;
-        if (count == 3 && sp == 0) {sp = i;}
-        if (count == 4 && ep == 0) {ep = i-2;}
-        val = EEPROM.read(i++);
-    }
-    // Serial.println(sp);
-    // Serial.println(ep);
-    // return "";
-    for (int i = sp; i != ep + 1; i++) {
-        val = EEPROM.read(i);
-        str += val;
-    }
-    //Serial.println(str);
-        
-    return str.toInt();
-}
-
-uint16_t getUploadInt()
-{
-    char val;
-    int count = 0, sp = 0, ep = 0, i = 0;
-    String str;
-    val = EEPROM.read(i++);
-    while (val != '$') {
-        if (val == ',') count++;
-        if (count == 4 && sp == 0) {sp = i;break;}
-        val = EEPROM.read(i++);
-    }
-    // Serial.println(sp);
-    // Serial.println(ep);
-    // return "";
-    i = sp;
-    val = EEPROM.read(i++);
-    while (val != '$') {
-        str += val;
-        val = EEPROM.read(i++);
-    }
-    //Serial.println(str);
-        
-    return str.toInt();
-}
-
 String getAllEEPROM()
 { 
     char val;
@@ -524,49 +474,66 @@ String getWiFiName()
 String getWifiPass()
 {
     char val;
-    int count = 0, sp = 0, ep = 0, i = 0;
+    boolean flag = false;
+    int count = 0, i = 0;
     String str;
-    val = EEPROM.read(i++);
     while (val != '$') {
-        if (val == ',') count++;
-        if (count == 1 && sp == 0) {sp = i;}
-        if (count == 2 && ep == 0) {ep = i-2;}
         val = EEPROM.read(i++);
+        if (val == ',') count++;
+        if (count == 1 && flag == false) {flag = true; continue;} 
+        if (count == 2) {break;}
+        if (flag) str += val;
     }
-    // Serial.println(sp);
-    // Serial.println(ep);
-    // return "";
-    for (int i = sp; i != ep + 1; i++) {
-        val = EEPROM.read(i);
-        str += val;
-    }
-    //Serial.println(str);
-        
     return str;
 }
 
 String getAPI()
 {
     char val;
-    int count = 0, sp = 0, ep = 0, i = 0;
+    boolean flag = false;
+    int count = 0, i = 0;
+    String str;
+    while (val != '$') {
+        val = EEPROM.read(i++);
+        if (val == ',') count++;
+        if (count == 2 && flag == false) {flag = true; continue;} 
+        if (count == 3) {break;}
+        if (flag) str += val;
+    }
+    return str;
+}
+
+uint16_t getCaptureInt()
+{
+    char val;
+    boolean flag = false;
+    int count = 0, i = 0;
+    String str;
+    while (val != '$') {
+        val = EEPROM.read(i++);
+        if (val == ',') count++;
+        if (count == 3 && flag == false) {flag = true; continue;} 
+        if (count == 4) {break;}
+        if (flag) str += val;
+    }
+    return str.toInt();
+}
+
+uint16_t getUploadInt()
+{
+    char val;
+    boolean flag = false;
+    int count = 0, i = 0;
     String str;
     val = EEPROM.read(i++);
     while (val != '$') {
+        if (flag) str += val;
         if (val == ',') count++;
-        if (count == 2 && sp == 0) {sp = i;}
-        if (count == 3 && ep == 0) {ep = i-2;}
+        if (count == 4) {flag = true;}
         val = EEPROM.read(i++);
     }
-    //     Serial.println(sp);
-    // Serial.println(ep);
-
-    // return "";
-    for (int i = sp; i != ep + 1; i++) {
-        val = EEPROM.read(i);
-        str += val;
-    }
-    //Serial.println(str);
-    return str;
+        
+    return str.toInt();
 }
 
 String getTemp(char *buf)
@@ -626,30 +593,13 @@ void testWiFi()
 {
     String data, stime;
     char raw[64] = "1,2015-02-27,01:44:33,38.5,66.6$";  
-
-    //int chk = DHT.read22(DHT22_PIN);
-    float temp, hum;
-    temp = htu.readTemperature();
-    hum = htu.readHumidity();
     
-    Serial.println(F("AT"));
-    delay(2000);
-    while (!Serial.find("OK")) {
-        delay(2000);
-        Serial.println("AT");
-    }
+    Serial.println(F("testWiFi"));
+    if (!initWifiSerial()) return;
 
     //Serial.println(F("connectWiFi"));
     if (connectWiFi()) {
-        //stime = getTime(raw);
-//GET　https://api.thingspeak.com/update?key=AVRDH90QKS69WV0D&field1=10&field2=40&created_at=2015-03-05%2011:19:00&timezone=Australia%2FSydney
-        data = String(temp) + "&field2=" + String(hum);
-        //     "&created_at=" + String(2015) + String(F("-")) + String(3) + String(F("-")) + String(5) +
-        //     String(F("%20")) + String(1) + String(F(":")) + String(44) + String(F(":")) + String(45);            
-        //data = String(temp) + String(F("&field2=")) + String(hum) + 
-        //    String(F("&created_at=")) + String(stime);
-        //transmitData(data);
-        delay(15000);  
+        transmitData(raw);
     }
 }
 
