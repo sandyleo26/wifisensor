@@ -6,16 +6,14 @@
 #include <ds3231.h>
 #include <PowerSaver.h>
 #include <SdFat.h>
-#include <dht.h>
 #include <Wire.h>
 #include <EEPROM.h>
+#include "HTU21D.h"
 
 // RTC    ******************************
 #define SECONDS_DAY 86400
 #define BUFF_MAX 96
-//char buff[BUFF_MAX];
-//int dayStart = 26, hourStart = 20, minStart = 30;    // start time: day of the month, hour, minute (values automatically assigned by the GUI)
-//const uint8_t days_in_month [12] PROGMEM = { 31,28,31,30,31,30,31,31,30,31,30,31 };
+
 ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW) 
 {
   PORTB ^= (1<<PORTB1);
@@ -28,15 +26,14 @@ char sdLogFile[] = "sdlog.csv";
 char configFile[] = "index.txt";
 #define SDcsPin 9 // D9
 
-// DHT    ******************************
-#define DHT22_PIN 6 // D6
-dht DHT;
+// HTU21D    ******************************
+HTU21D htu;
 
 // NPN    ******************************
-#define NPN1 3 // D3 control ESP8266
-#define NPN2 4 // D4 control DHT & SD Card
+#define WIFI_CP_PD 3 // D3 control ESP8266
+#define NPN_Q1 4 // D4 control DHT & SD Card
 
-// User Configuration
+// User Configuration: SSID,PASS,API,CAPINT,UPINT
 uint16_t captureInt = 15, uploadInt = 30;  // in seconds
 
 // Low Power 
@@ -48,7 +45,7 @@ uint32_t nextCaptureTime, nextUploadTime, alarm;
 struct ts t;
 
 // LED
-#define LED 5
+#define LED 2
 
 // regulator
 #define LDO 5
@@ -60,14 +57,6 @@ struct ts t;
 //#define CONCMD2 "AT+CWJAP=\"iPhone\",\"s32nzqaofv9tv\"" // iPhone is SSID, s32*** is password
 #define IPcmd "AT+CIPSTART=\"TCP\",\"184.106.153.149\",80" // ThingSpeak IP Address: 184.106.153.149
 //String GET = "GET /update?key=8LHRO7Q7L74WVJ07&field1=";
-//char wifiName[10]; 
-//char wifiPass[16];
-//char API[48];
-//#define wifiName "iPhone"
-//#define wifiPass "s32nzqaofv9t"
-//#define wifiName "HOUSTON_23"
-//#define wifiPass "0450850509_UNSW"
-//#define API "GET /update?key=8LHRO7Q7L74WVJ07&field1="
 
 
 // setup ****************************************************************
@@ -80,77 +69,28 @@ void setup()
     //testMemSetup();
     chip.sleepInterruptSetup();    // setup sleep function on the ATmega328p. Power-down mode is used here
     nextCaptureTime = t.unixtime;
-    nextUploadTime = t.unixtime;
+    nextUploadTime = t.unixtime + uploadInt;
+    Serial.println(getWiFiName());
+    Serial.println(getWifiPass());
+    Serial.println(getAPI());
+    Serial.println(getCaptureInt());
+    Serial.println(getUploadInt());
+    delay(5);
 }
 
 void echoEEPROM() {
-  // for (int address = 0; address < 100; address++) {
-  //     int value = EEPROM.read(address);
-  //     Serial.print(address);
-  //     Serial.print("\t");
-  //     Serial.print(value, DEC);
-  //     Serial.println();
-  //     delay(500);
-  // }
-//Serial.println(getALlEEPROM());
-  // Serial.println(getWiFiName());
-  // Serial.println(getWifiPass());
-    getWifiPass();
-    getAPI();
-  // Serial.println(getAPI());
-}
-
-void loop()
-{
-    DS3231_get(&t);
-    // debugPrintTime();
-    // testCaptureData();
-    // testMemSetup();
-    // testUploadData();
-    // testWiFi();
-    if (isCaptureMode()) {
-        Serial.println(F("CaptureMode"));
-        digitalWrite(NPN2, HIGH);
-        captureStoreData();
-        captureCount++;
-        DS3231_get(&t);
-        while (nextCaptureTime < t.unixtime) nextCaptureTime += captureInt;
-    } else if (isUploadMode()) {
-        Serial.println(F("UploadMode"));
-        digitalWrite(NPN1, HIGH);
-        uploadData();
-        uploadCount++;
-        DS3231_get(&t);
-        while (nextUploadTime < t.unixtime) nextUploadTime += uploadInt;
-    } else if (isSleepMode()) {
-        Serial.println(F("SleepMode"));
-        setAlarm1();
-        goSleep();
-    }
-}
-
-void goSleep()
-{
-    //Serial.println(F("goSleep"));
-    delay(2000);
-    digitalWrite(NPN2, LOW);
-    digitalWrite(NPN1, LOW);
-    delay(5);  // give some delay
-    chip.turnOffADC();
-    chip.turnOffSPI();
-    chip.turnOffWDT();
-    chip.turnOffBOD();
-    chip.goodNight();
-    if (DS3231_triggered_a1()) {
-        delay(1000);
-        //debugPrintTime();
-        //Serial.println(F("**Alarm has been triggered**"));
-        DS3231_clear_a1f();
-    }
-    //chip.turnOnADC();    // enable ADC after processor wakes up
-    chip.turnOnSPI();   // turn on SPI bus once the processor wakes up
-    delay(1);    // important delay to ensure SPI bus is properly activated
-    //RTC.alarmFlagClear();
+  for (int address = 0; address < 100; address++) {
+      int value = EEPROM.read(address);
+      Serial.print(address);
+      Serial.print("\t");
+      Serial.print(value, DEC);
+      Serial.println();
+      delay(10);
+  }
+  Serial.println(getAllEEPROM());
+  Serial.println(getWiFiName());
+  Serial.println(getWifiPass());
+  Serial.println(getAPI());
 }
 
 void readUserSetting()
@@ -191,37 +131,40 @@ void readUserSettingEEPROM()
     int addr = 0;
     if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
     if (!myFile.open(configFile, O_READ)) {
-        sd.errorHalt("opening test.txt for read failed");
+        sd.errorHalt("index.txt!");
     }
 
-    //Serial.println(F("readUserSettingEEPROM"));
     while (myFile.available()) {
         i = myFile.read();
         //Serial.write(i);
         EEPROM.write(addr++, i);
-        delay(100);
+        delay(5);
     }
     myFile.close();
 
+    captureInt = getCaptureInt();
+    uploadInt = getUploadInt();
 }
 
 void initialize()
 {
-    Serial.begin(9600); // Todo: try 19200
+    Serial.begin(57600);
     delay(1000);
+    pinMode(LDO, OUTPUT);
     pinMode(LED, OUTPUT);
-    pinMode(NPN2, OUTPUT); // Turn on DHT & SD
-    pinMode(NPN1, OUTPUT); // Turn on WiFi  
-    digitalWrite(NPN2, HIGH);
-    digitalWrite(NPN1, HIGH);
-    digitalWrite(LED, LOW);
+    pinMode(NPN_Q1, OUTPUT); // Turn on DHT & SD
+    pinMode(WIFI_CP_PD, OUTPUT); // Turn on WiFi  
+    digitalWrite(LDO, HIGH);
+    digitalWrite(LED, HIGH);
+    digitalWrite(NPN_Q1, HIGH);
+    digitalWrite(WIFI_CP_PD, HIGH);
 
     // 1. check SD
     // initialize SD card on the SPI bus
     //todo: get the line number to ignore
     if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
     if (!myFile.open(sdLogFile, O_WRITE | O_CREAT | O_TRUNC)) {
-        sd.errorHalt("sd!");
+        sd.errorHalt("sdlog.csv!");
     }
     myFile.close();
     
@@ -232,12 +175,92 @@ void initialize()
     DS3231_init(DS3231_INTCN);
     DS3231_clear_a1f();
     DS3231_get(&t);
-    nextCaptureTime = t.unixtime + captureInt;
-    nextUploadTime = t.unixtime + uploadInt;
 
-    // 3. check DHT
+    // HTU21D
+    htu.begin();
+
     // 4. check battery
     // 5. check USB connection
+}
+
+void loop()
+{
+    DS3231_get(&t);
+    // testCaptureData();
+    // testMemSetup();
+    // testUploadData();
+    // testWiFi();
+    if (isCaptureMode()) {
+        Serial.println(F("CaptureMode"));
+        digitalWrite(NPN_Q1, HIGH);
+        captureStoreData();
+        captureCount++;
+        DS3231_get(&t);
+        while (nextCaptureTime < t.unixtime) nextCaptureTime += captureInt;
+    } else if (isUploadMode()) {
+        Serial.println(F("UploadMode"));
+        digitalWrite(WIFI_CP_PD, HIGH);
+        uploadData();
+        uploadCount++;
+        DS3231_get(&t);
+        while (nextUploadTime < t.unixtime) nextUploadTime += uploadInt;
+    } else if (isSleepMode()) {
+        Serial.println(F("SleepMode"));
+        setAlarm1();
+        goSleep();
+    }
+}
+
+void setAlarm1()
+{
+    uint32_t dayclock, wakeupTime;
+    uint8_t second, minute, hour;
+    wakeupTime = t.unixtime + alarm;
+    dayclock = (uint32_t)wakeupTime % SECONDS_DAY;
+
+    second = dayclock % 60;
+    minute = (dayclock % 3600) / 60;
+    hour = dayclock / 3600;
+
+    // flags define what calendar component to be checked against the current time in order
+    // to trigger the alarm - see datasheet
+    // A1M1 (seconds) (0 to enable, 1 to disable)
+    // A1M2 (minutes) (0 to enable, 1 to disable)
+    // A1M3 (hour)    (0 to enable, 1 to disable) 
+    // A1M4 (day)     (0 to enable, 1 to disable)
+    // DY/DT          (dayofweek == 1/dayofmonth == 0)
+    uint8_t flags[5] = { 0, 0, 0, 1, 1};
+
+    // set Alarm1
+    DS3231_set_a1(second, minute, hour, 0, flags);
+    // Serial.print(F("Hour: "));Serial.println(hour);
+    // Serial.print(F("Min: "));Serial.println(minute);
+    // Serial.print(F("Second: "));Serial.println(second);
+
+    // activate Alarm1
+    DS3231_set_creg(DS3231_INTCN | DS3231_A1IE);
+}
+
+void goSleep()
+{
+    //Serial.println(F("goSleep"));
+    digitalWrite(NPN_Q1, LOW);
+    digitalWrite(WIFI_CP_PD, LOW);
+    delay(5);  // give some delay
+    chip.turnOffADC();
+    chip.turnOffSPI();
+    chip.turnOffWDT();
+    chip.turnOffBOD();
+    chip.goodNight();
+    if (DS3231_triggered_a1()) {
+        delay(5);
+        //debugPrintTime();
+        //Serial.println(F("**Alarm has been triggered**"));
+        DS3231_clear_a1f();
+    }
+    //chip.turnOnADC();    // enable ADC after processor wakes up
+    chip.turnOnSPI();   // turn on SPI bus once the processor wakes up
+    delay(5);    // important delay to ensure SPI bus is properly activated
 }
 
 bool isCaptureMode()
@@ -256,8 +279,8 @@ bool isSleepMode()
     capAlarm = nextCaptureTime - t.unixtime;
     upAlarm = nextUploadTime - t.unixtime;
     alarm = (capAlarm<upAlarm) ? capAlarm : upAlarm;
-    // sleep&wake needs at most 4 sec so any value below is not worth while
-    return alarm>4;
+    // sleep&wake needs at most 2 sec so any value below is not worth while
+    return alarm>1;
 }
 
 void testCaptureData()
@@ -275,10 +298,9 @@ void testCaptureData()
 //    Serial.println(buff);
 //    Serial.println(sizeof(buff));
 //    Serial.println(F("testCaptureData"));
-    int chk = DHT.read22(DHT22_PIN);
-    //Serial.print("chk: "); Serial.print(chk);
-    temp = DHT.temperature;
-    hum = DHT.humidity;
+
+    temp = htu.readTemperature();
+    hum = htu.readHumidity();
     captureCount++;
     dtostrf(temp, 3, 1, ttmp);
     dtostrf(hum, 3, 1, htmp);
@@ -303,53 +325,33 @@ void captureStoreData()
     char htmp[8];
     String str;
     float temp, hum;
-    int chk;
-    chk = DHT.read22(DHT22_PIN);
-    temp = DHT.temperature;
-    hum = DHT.humidity;
+    temp = htu.readTemperature();
+    hum = htu.readHumidity();
     dtostrf(temp, 3, 1, ttmp);
     dtostrf(hum, 3, 1, htmp);
-    // str += String(captureCount) + "," + String(t.year) + "-" + String(t.mon) + "-" + String(t.mday) + "," + 
-    //     String(t.hour) + ":" + String(t.min) + ":" + String(t.sec) + "," + String(ttmp) + "," + String(htmp) + String("$");
         
     delay(1000);
     if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
     if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
-        //sd.errorHalt("sd!");
+        sd.errorHalt("sd!");
     }
-    //myFile.println(str);
+
     myFile.print(captureCount);myFile.print(F(","));
     myFile.print(t.year); myFile.print(F("-"));myFile.print(t.mon);myFile.print(F("-"));myFile.print(t.mday);myFile.print(F(","));
     myFile.print(t.hour); myFile.print(F(":")); myFile.print(t.min); myFile.print(F(":")); myFile.print(t.sec); myFile.print(F(","));
     myFile.print(ttmp); myFile.print(F(",")); myFile.print(htmp); myFile.println(F("$"));
 
     myFile.close();
-    captureBlink();
-    
-//    if (!myFile.open(sdLogFile, O_READ)) {
-//        sd.errorHalt("opening failed");
-//    }
-//    Serial.println(sdLogFile);
-//
-//    // read from the file until there's nothing else in it:
-//    int data;
-//    while ((data = myFile.read()) >= 0) Serial.write(data);
-//    // close the file:
-//    myFile.close(); 
+    captureBlink();    
 }
 
 void uploadData()
 {
     String stemp, shum, stime, data;
-    uint8_t i = 0;
     int lineNum = 0;
     const int line_buffer_size = 64;
     char buffer[line_buffer_size];
-    while (!Serial.find("OK")) {
-        if (i++>50) return;
-        Serial.println(F("AT"));
-        delay(2000);
-    }
+    if (!initWifiSerial()) return;
 
     //Serial.println(F("connectWiFi"));
     if (connectWiFi()) {
@@ -371,45 +373,10 @@ void uploadData()
           }
           if (lineNum<=uploadedLines) continue;
 
-          stemp = getTemp(buffer);
-          shum = getHum(buffer);
-          stime = getTime(buffer);
-          //https://api.thingspeak.com/update?api_key=8LHRO7Q7L74WVJ07&field1=33&field2=3&created_at=2015-02-27%2012:43:00
-          data = stemp + String(F("&field2=")) + shum + String(F("&created_at=")) + stime; //+ String(F("+11:00"));                        
-          transmitData(data);
-          delay(9000);
+          // buffer: "133,2015-02-27,01:44:33,25.6,66.6$";
+          transmitData(buffer);
         }
     }
-}
-
-void setAlarm1()
-{
-    uint32_t dayclock, wakeupTime;
-    uint8_t second, minute, hour;
-    wakeupTime = t.unixtime + alarm;
-    dayclock = (uint32_t)wakeupTime % SECONDS_DAY;
-
-    second = dayclock % 60;
-    minute = (dayclock % 3600) / 60;
-    hour = dayclock / 3600;
-
-    // flags define what calendar component to be checked against the current time in order
-    // to trigger the alarm - see datasheet
-    // A1M1 (seconds) (0 to enable, 1 to disable)
-    // A1M2 (minutes) (0 to enable, 1 to disable)
-    // A1M3 (hour)    (0 to enable, 1 to disable) 
-    // A1M4 (day)     (0 to enable, 1 to disable)
-    // DY/DT          (dayofweek == 1/dayofmonth == 0)
-    boolean flags[5] = { 0, 0, 0, 1, 1};
-
-    // set Alarm1
-    DS3231_set_a1(second, minute, hour, 0, flags);
-    // Serial.print(F("Hour: "));Serial.println(hour);
-    // Serial.print(F("Min: "));Serial.println(minute);
-    // Serial.print(F("Second: "));Serial.println(second);
-
-    // activate Alarm1
-    DS3231_set_creg(DS3231_INTCN | DS3231_A1IE);
 }
 
 boolean connectWiFi(){
@@ -418,86 +385,117 @@ boolean connectWiFi(){
     wifiName = getWiFiName();
     wifiPass = getWifiPass();
     Serial.println(F(CONCMD1));
-    delay(2000);
     Serial.print(F("AT+CWJAP=\"")); Serial.print(wifiName); Serial.print(F("\",\"")); Serial.print(wifiPass); Serial.println(F("\""));
     //Serial.println(String(F("AT+CWJAP=\"")) + String(wifiName) + String(F("\",\"")) + String(wifiPass) + String(F("\"")));
-    delay(3000);
     //testMemSetup();
-    while (Serial.find("OK")) {
-        if (i++>50) return false;
-        delay(3000);
+    while (!Serial.find("OK")) {
+        if (i++>15) return false;
     }
     return true;
 }
 
-void debugPrintTime()
-{
-    // display current time
-    String str;
-    DS3231_get(&t);
-    //snprintf(buff, BUFF_MAX, "%02d:%02d:%02d,cap:%d,up:%d,",t.hour, t.min, t.sec, captureCount, uploadCount);
-    //Serial.println(buff);
-    str += String(t.year) + "-" + String(t.mon) + "-" + String(t.mday) + "," + 
-        String(t.hour) + ":" + String(t.min) + ":" + String(t.sec) + ",cap:" + String(captureCount) + ",up:" + String(uploadCount);
-    Serial.println(str);
-}
+void transmitData(char* data) {  
 
-void transmitData(String data) {  
-    //String cmd(GET);
-    //String cmd(F(API));
     String cmd;
     int length;
-
     uint8_t i = 0;
-    Serial.println(F(IPcmd));
-    delay(2000);
-    if(Serial.find("Error")) return;
 
     cmd = getAPI();
-    // cmd += data;
-    // cmd += "\r\n";
-    length = cmd.length() + data.length() + 2;
-    Serial.print(F("AT+CIPSEND="));
-    Serial.println(length);
-    delay(5000);
+    length = cmd.length() + strlen(data) + 2;
+
+    if (!initDataSend(length)) return;
 
     while (!Serial.find(">")) {
-        if (i++>100) return;
+        if (i++>30) return;
         Serial.println(F("AT+CIPCLOSE"));
-        delay(2000);
-        Serial.println(F("AT"));
-        delay(2000);
-        while (!Serial.find("OK")) {
-            if (i++>100) return;
-            delay(2000);
-            Serial.println(F("AT"));
-        }
+        //delay(10);
+        if (!initWifiSerial()) return;
+
         if (connectWiFi()) {
-            Serial.println(F(IPcmd));
-            if(Serial.find("Error")) return;
-            delay(5000);
-            Serial.print(F("AT+CIPSEND="));
-            //Serial.println(cmd.length());
-            Serial.println(length);
-            delay(5000);
+            if (!initDataSend(length)) return;
         }
     }
     Serial.print(cmd); Serial.print(data); Serial.print(F("\r\n"));
-    //Serial.print(cmd);
     uploadedLines++;
-    uploadBlink();
+    //uploadBlink();
 
-    //testMemSetup();
     return;
-  // if(Serial.find(">")){
-  //   Serial.print(cmd);
-  //   uploadedLines++;
-  // }else{
-  //   Serial.println(F("AT+CIPCLOSE"));
-  // }
 }
 
-String getALlEEPROM()
+boolean initWifiSerial()
+{
+    uint8_t i = 0;
+    //Serial.println(F("AT+RST"));
+    delay(5);
+    while (!Serial.find("OK")) {
+        if (i++>10) return false;
+        Serial.println(F("AT"));
+        delay(5);
+    }
+    return true;
+}
+
+boolean initDataSend(int length)
+{
+    Serial.println(F(IPcmd));
+    delay(5);
+    if(Serial.find("Error")) return false;
+    Serial.print(F("AT+CIPSEND="));
+    Serial.println(length);
+    delay(5);
+    return true;
+}
+
+uint16_t getCaptureInt()
+{
+    char val;
+    int count = 0, sp = 0, ep = 0, i = 0;
+    String str;
+    val = EEPROM.read(i++);
+    while (val != '$') {
+        if (val == ',') count++;
+        if (count == 3 && sp == 0) {sp = i;}
+        if (count == 4 && ep == 0) {ep = i-2;}
+        val = EEPROM.read(i++);
+    }
+    // Serial.println(sp);
+    // Serial.println(ep);
+    // return "";
+    for (int i = sp; i != ep + 1; i++) {
+        val = EEPROM.read(i);
+        str += val;
+    }
+    //Serial.println(str);
+        
+    return str.toInt();
+}
+
+uint16_t getUploadInt()
+{
+    char val;
+    int count = 0, sp = 0, ep = 0, i = 0;
+    String str;
+    val = EEPROM.read(i++);
+    while (val != '$') {
+        if (val == ',') count++;
+        if (count == 4 && sp == 0) {sp = i;break;}
+        val = EEPROM.read(i++);
+    }
+    // Serial.println(sp);
+    // Serial.println(ep);
+    // return "";
+    i = sp;
+    val = EEPROM.read(i++);
+    while (val != '$') {
+        str += val;
+        val = EEPROM.read(i++);
+    }
+    //Serial.println(str);
+        
+    return str.toInt();
+}
+
+String getAllEEPROM()
 { 
     char val;
     int i = 0;
@@ -540,7 +538,6 @@ String getWifiPass()
     // return "";
     for (int i = sp; i != ep + 1; i++) {
         val = EEPROM.read(i);
-        delay(35);
         str += val;
     }
     //Serial.println(str);
@@ -566,7 +563,6 @@ String getAPI()
     // return "";
     for (int i = sp; i != ep + 1; i++) {
         val = EEPROM.read(i);
-        delay(35);
         str += val;
     }
     //Serial.println(str);
@@ -630,17 +626,11 @@ void testWiFi()
 {
     String data, stime;
     char raw[64] = "1,2015-02-27,01:44:33,38.5,66.6$";  
-//    dtostrf(27.5, 3, 1, buff);
-//    Serial.println(buff);
-//    Serial.println(sizeof(buff));
-//    dtostrf(-3.0, 3, 1, buff);
-//    Serial.println(buff);
-//    Serial.println(sizeof(buff));
-//    Serial.println(F("testCaptureData"));
-    int chk = DHT.read22(DHT22_PIN);
+
+    //int chk = DHT.read22(DHT22_PIN);
     float temp, hum;
-    temp = DHT.temperature;
-    hum = DHT.humidity;
+    temp = htu.readTemperature();
+    hum = htu.readHumidity();
     
     Serial.println(F("AT"));
     delay(2000);
@@ -658,7 +648,7 @@ void testWiFi()
         //     String(F("%20")) + String(1) + String(F(":")) + String(44) + String(F(":")) + String(45);            
         //data = String(temp) + String(F("&field2=")) + String(hum) + 
         //    String(F("&created_at=")) + String(stime);
-        transmitData(data);
+        //transmitData(data);
         delay(15000);  
     }
 }
@@ -676,19 +666,29 @@ void testMemSetup () {
 }
 
 void captureBlink() {
-    for (int i = 0; i < 3; i++) {
-        digitalWrite(LED, HIGH);   // turn the LED on (HIGH is the voltage level)
-        delay(10);              // wait for a second
-        digitalWrite(LED, LOW);    // turn the LED off by making the voltage LOW
-        delay(400);             
+    for (int i = 0; i < 1; i++) {
+        digitalWrite(LED, LOW);   // turn the LED on (HIGH is the voltage level)
+        delay(5);              // wait for a second
+        digitalWrite(LED, HIGH);    // turn the LED off by making the voltage LOW
+        delay(100);             
     }
 }
 
 void uploadBlink() {
-    for (int i = 0; i < 10; i++) {
-        digitalWrite(LED, HIGH);   // turn the LED on (HIGH is the voltage level)
+    for (int i = 0; i < 3; i++) {
+        digitalWrite(LED, LOW);   // turn the LED on (HIGH is the voltage level)
+        delay(5);              // wait for a second
+        digitalWrite(LED, HIGH);    // turn the LED off by making the voltage LOW
+        delay(100);             
+    }
+}
+
+void blink5()
+{
+    for (int i = 0; i < 3; i++) {
+        digitalWrite(LED, LOW);   // turn the LED on (HIGH is the voltage level)
         delay(10);              // wait for a second
-        digitalWrite(LED, LOW);    // turn the LED off by making the voltage LOW
-        delay(120);             
+        digitalWrite(LED, HIGH);    // turn the LED off by making the voltage LOW
+        delay(400);             
     }
 }
