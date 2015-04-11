@@ -14,6 +14,7 @@
 #define SECONDS_DAY 86400
 #define BUFF_MAX 96
 #define LINE_BUF_SIZE 160
+#define MAX_LINES_PER_FILE 100
 
 ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW) 
 {
@@ -24,7 +25,7 @@ ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW)
 SdFat sd;
 SdFile myFile;
 char sdLogFile[] = "sdlog.csv";
-char configFile[] = "index.txt";
+char configFile[] = "config.txt";
 #define SDcsPin 9 // D9
 
 // HTU21D    ******************************
@@ -55,7 +56,10 @@ struct ts t;
 //#define SSID "iPhone"  //change to your WIFI name
 //#define PASS "s32nzqaofv9tv"  //wifi password
 #define CONCMD1 "AT+CWMODE=1"
-#define IPcmd "AT+CIPSTART=\"TCP\",\"184.106.153.149\",80" // ThingSpeak IP Address: 184.106.153.149
+//#define IPcmd "AT+CIPSTART=\"TCP\",\"184.106.153.149\",80" // ThingSpeak
+//#define IPcmd "AT+CIPSTART=\"TCP\",\"69.195.124.239\",80" // meetisan
+#define IPcmd "AT+CIPSTART=\"TCP\",\""
+
 //String GET = "GET /update?key=8LHRO7Q7L74WVJ07&field1=";
 
 
@@ -72,6 +76,7 @@ void setup()
     nextUploadTime = t.unixtime + uploadInt;
     Serial.println(getWiFiName());
     Serial.println(getWifiPass());
+    Serial.println(getIP());
     Serial.println(getAPI());
     Serial.println(getCaptureInt());
     Serial.println(getUploadInt());
@@ -90,39 +95,8 @@ void echoEEPROM() {
   Serial.println(getAllEEPROM());
   Serial.println(getWiFiName());
   Serial.println(getWifiPass());
+  Serial.println(getIP());
   Serial.println(getAPI());
-}
-
-void readUserSetting()
-{
-    const int line_buffer_size = 100;
-    char buffer[line_buffer_size];
-    int line_number = 0;
-    int num = 0;
-    ifstream sdin(configFile);
-
-    if (!myFile.open(configFile, O_READ)) {
-        sd.errorHalt("sd!");
-    }
-
-    while (sdin.getline(buffer, line_buffer_size, ',') || sdin.gcount()) {
-        num = num + 1;
-        if (num == 1){
-          //wifiName = (String) buffer;
-            //strncpy(wifiName, buffer, 16);
-        }else if (num == 2){
-          //wifiPassword = (String) buffer;
-            //strncpy(wifiPass, buffer, 16);
-        }else if (num == 3){
-          //API = (String) buffer;
-          //strncpy(API, buffer, 40);
-        }else if (num == 4){
-            captureInt = atof(buffer);
-        }else if (num == 5){
-            uploadInt = atof(buffer);
-        }   
-    }
-    myFile.close();
 }
 
 void readUserSettingEEPROM()
@@ -159,22 +133,19 @@ void initialize()
     digitalWrite(NPN_Q1, HIGH);
     digitalWrite(WIFI_CP_PD, HIGH);
 
-    // 1. check SD
-    // initialize SD card on the SPI bus
-    //todo: get the line number to ignore
-    if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
-    if (!myFile.open(sdLogFile, O_WRITE | O_CREAT | O_TRUNC)) {
-        sd.errorHalt("sdlog.csv!");
-    }
-    myFile.close();
-    
-    // 2. check wifi connection
-
-    // RTC
+    // 1. RTC
     Wire.begin();
     DS3231_init(DS3231_INTCN);
     DS3231_clear_a1f();
     DS3231_get(&t);
+
+    // 2. check SD
+    // initialize SD card on the SPI bus
+    //todo: get the line number to ignore
+    if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
+    createNewLogFile();
+    
+    // 2. check wifi connection
 
     // HTU21D
     htu.begin();
@@ -254,7 +225,6 @@ void goSleep()
     chip.goodNight();
     if (DS3231_triggered_a1()) {
         delay(5);
-        //debugPrintTime();
         //Serial.println(F("**Alarm has been triggered**"));
         DS3231_clear_a1f();
     }
@@ -283,39 +253,51 @@ bool isSleepMode()
     return alarm>1;
 }
 
-void testCaptureData()
+boolean isNewDay()
 {
-    //char raw[64] = "1,2015-02-27,01:44:33,38.5,66.6$";
-    char ttmp[8]; 
-    char htmp[8];
-    float temp, hum;
-    String str;
-    delay(5000);
-//    dtostrf(27.5, 3, 1, buff);
-//    Serial.println(buff);
-//    Serial.println(sizeof(buff));
-//    dtostrf(-3.0, 3, 1, buff);
-//    Serial.println(buff);
-//    Serial.println(sizeof(buff));
-//    Serial.println(F("testCaptureData"));
-
-    temp = htu.readTemperature();
-    hum = htu.readHumidity();
-    captureCount++;
-    dtostrf(temp, 3, 1, ttmp);
-    dtostrf(hum, 3, 1, htmp);
-    str += String(captureCount) + "," + String(t.year) + "-" + String(t.mon) + "-" + String(t.mday) + "," + 
-        String(t.hour) + ":" + String(t.min) + ":" + String(t.sec) + "," + String(ttmp) + "," + String(htmp) + String("$");
-        
-    delay(1000);
-    if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
-    if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
-        sd.errorHalt("sd!");
+    int mday = (sdLogFile[5]-'0') * 10 + (sdLogFile[6]-'0');
+    if (mday == t.mday) {
+        //Serial.print(F("Same: ")); Serial.print(sdLogFile[5]); Serial.print(sdLogFile[6]); Serial.print(F(" ")); Serial.println(t.mday);
+        return true;
+    } else {
+        //Serial.print(F("diff: ")); Serial.print(sdLogFile[5]); Serial.print(sdLogFile[6]); Serial.print(F(" ")); Serial.println(t.mday);
+        return false;
     }
-    //myFile.println("testing 1, 2, 3.");
-    myFile.println(str);
-    // close the file:
-    myFile.close();
+}
+
+void createNewLogFile()
+{
+    if (!createNewLogFile(false))
+        if (!createNewLogFile(true))
+            sd.errorHalt("NewLog");
+    uploadedLines = 0;
+}
+
+boolean createNewLogFile(boolean overwrite)
+{
+    char c = 'a';
+    char fmt[] = "L%02d%02d%02d%c.csv";
+    uint8_t i = 0;
+
+    DS3231_get(&t);
+    while(i++<26) {
+        sprintf(sdLogFile, fmt, t.year-2000, t.mon, t.mday, c++);
+        //Serial.print(F("log: ")); Serial.println(sdLogFile);
+        ifstream f(sdLogFile);
+        if (f.good()) {
+            f.close();
+            if (!overwrite) continue;
+        }
+        if (!myFile.open(sdLogFile, O_WRITE | O_CREAT | O_TRUNC)) {
+            Serial.print(F("Failed to open")); Serial.println(sdLogFile);
+            myFile.close();
+        } else {
+            Serial.println(F("sd works!"));
+            myFile.close();
+            return true;
+        }
+    }
+    return false;
 }
 
 void captureStoreData()
@@ -332,8 +314,12 @@ void captureStoreData()
         
     delay(1000);
     if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
+
     if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
-        sd.errorHalt("sd!");
+        createNewLogFile();
+        if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
+            sd.errorHalt("sd!");
+        }
     }
 
     myFile.print(captureCount);myFile.print(F(","));
@@ -358,30 +344,31 @@ void uploadData()
         ifstream sdin(sdLogFile);         
 
         while (sdin.getline(buffer+offset, LINE_BUF_SIZE-offset, '\n') || sdin.gcount()) {
-          //int count = sdin.gcount();
-          if (sdin.fail()) {
-            //cout << "Partial long line";
-            //Serial.println(F("Partial long line"));
-            sdin.clear(sdin.rdstate() & ~ios_base::failbit);
-          } else if (sdin.eof()) {
-            //cout << "Partial final line";  // sdin.fail() is false
-            //Serial.println(F("Partial final line"));
-            continue;
-          } else {
-            lineNum++;
-          }
-          if (lineNum<=uploadedLines) continue;
+            if (++lineNum<=uploadedLines) continue;
+            if (sdin.fail()) {
+              //Serial.println(F("Partial long line"));
+              sdin.clear(sdin.rdstate() & ~ios_base::failbit);
+              buffer[LINE_BUF_SIZE-1] = '\0';
+              buffer[LINE_BUF_SIZE-2] = '$';
+            }
 
-          multilines++;
-          offset = strlen(buffer);
+            multilines++;
+            offset = strlen(buffer);
 
-          // buffer: "133,2015-02-27,01:44:33,25.6,66.6$";
-          if (multilines == 4) {
-            if (!transmitData(buffer, multilines))
-                return;
-            multilines = 0;
-            offset = 0;
-          }
+            // buffer: "133,2015-02-27,01:44:33,25.6,66.6$";
+            if (multilines == 4) {
+                if (!transmitData(buffer, multilines))
+                    return;
+                multilines = 0;
+                offset = 0;
+            } 
+        }
+        if (multilines!=4 && uploadedLines+multilines>=MAX_LINES_PER_FILE) {
+            if (multilines>0) {
+                if (!transmitData(buffer, multilines))
+                    return;
+            }
+            createNewLogFile();
         }
     }
 }
@@ -411,6 +398,7 @@ boolean transmitData(char* data, uint16_t lines) {
     length = cmd.length() + strlen(data) + 2;
 
     if (!initDataSend(length)) return false;
+
     while (!Serial.find(">")) {
         if (i++>30) return false;
         Serial.println(F("AT+CIPCLOSE"));
@@ -447,7 +435,7 @@ boolean initWifiSerial()
 
 boolean initDataSend(int length)
 {
-    Serial.println(F(IPcmd));
+    Serial.print(F(IPcmd)); Serial.print(getIP()); Serial.println(F("\",80"));
     delay(5);
     if(Serial.find("Error")) return false;
     Serial.print(F("AT+CIPSEND="));
@@ -482,7 +470,7 @@ String getWiFiName()
     return str;
 }
 
-String getWifiPass()
+String getConfigByPos(uint8_t pos)
 {
     char val;
     boolean flag = false;
@@ -491,43 +479,31 @@ String getWifiPass()
     while (val != '$') {
         val = EEPROM.read(i++);
         if (val == ',') count++;
-        if (count == 1 && flag == false) {flag = true; continue;} 
-        if (count == 2) {break;}
+        if (count == pos-1 && flag == false) {flag = true; continue;} 
+        if (count == pos) {break;}
         if (flag) str += val;
     }
     return str;
+}
+
+String getWifiPass()
+{
+    return getConfigByPos(2);
+}
+
+String getIP()
+{
+    return getConfigByPos(3);
 }
 
 String getAPI()
 {
-    char val;
-    boolean flag = false;
-    int count = 0, i = 0;
-    String str;
-    while (val != '$') {
-        val = EEPROM.read(i++);
-        if (val == ',') count++;
-        if (count == 2 && flag == false) {flag = true; continue;} 
-        if (count == 3) {break;}
-        if (flag) str += val;
-    }
-    return str;
+    return getConfigByPos(4);
 }
 
 uint16_t getCaptureInt()
 {
-    char val;
-    boolean flag = false;
-    int count = 0, i = 0;
-    String str;
-    while (val != '$') {
-        val = EEPROM.read(i++);
-        if (val == ',') count++;
-        if (count == 3 && flag == false) {flag = true; continue;} 
-        if (count == 4) {break;}
-        if (flag) str += val;
-    }
-    return str.toInt();
+    return getConfigByPos(5).toInt();
 }
 
 uint16_t getUploadInt()
@@ -540,64 +516,11 @@ uint16_t getUploadInt()
     while (val != '$') {
         if (flag) str += val;
         if (val == ',') count++;
-        if (count == 4) {flag = true;}
+        if (count == 5) {flag = true;}
         val = EEPROM.read(i++);
     }
         
     return str.toInt();
-}
-
-String getTemp(char *buf)
-{
-    // Will copy 18 characters from array1 to array2
-    //strncpy(array2, array1, 18);
-    int count = 0, sp = 0, ep = 0;
-    String str;
-    for(int i=0; buf[i]!='$';i++) {
-        if(buf[i]==',')  count++;
-        if (count == 3 && sp == 0) {sp = i+1;}
-        if (count == 4 && ep == 0) {ep = i-1;}
-    }
-    for (int i = sp; i != ep + 1; i++)
-        str += buf[i];
-    return str;
-}
-
-String getHum(char *buf)
-{
-    int count = 0, sp = 0;
-    String str;
-    for(int i=0; buf[i]!='$';i++) {
-        if(buf[i]==',')  count++;
-        if (count == 4 && sp == 0) {sp = i+1;}
-    }
-    for (int i = sp; buf[i] != '$'; i++)
-        str += buf[i];
-    return str;
-}
-
-String getTime(char *buf)
-{
-    int count = 0, sp = 0, ep = 0;
-    String str;
-    for(int i=0; buf[i]!='$';i++) {
-        if(buf[i]==',')  count++;
-        if (count == 1 && sp == 0) {sp = i+1;}
-        if (count == 2 && ep == 0) {ep = i-1;}
-    }
-    for (int i = sp; i != ep + 1; i++)
-        str += buf[i];
-    str += String(F("%20"));
-    sp =0; ep = 0; count = 0;
-    for(int i=0; buf[i]!='$';i++) {
-        if(buf[i]==',')  count++;
-        if (count == 2 && sp == 0) {sp = i+1;}
-        if (count == 3 && ep == 0) {ep = i-1;}
-    }
-    for (int i = sp; i != ep + 1; i++)
-        str += buf[i];
-    str += String(F("&timezone=Australia%2FSydney"));
-    return str;
 }
 
 void testWiFi()
@@ -653,3 +576,16 @@ void blink5()
         delay(400);             
     }
 }
+
+void debugPrintTime()
+{
+    // display current time
+    String str;
+    DS3231_get(&t);
+    //snprintf(buff, BUFF_MAX, "%02d:%02d:%02d,cap:%d,up:%d,",t.hour, t.min, t.sec, captureCount, uploadCount);
+    //Serial.println(buff);
+    str += String(t.year) + "-" + String(t.mon) + "-" + String(t.mday) + "," + 
+        String(t.hour) + ":" + String(t.min) + ":" + String(t.sec) + ",cap:" + String(captureCount) + ",up:" + String(uploadCount);
+    Serial.println(str);
+}
+
