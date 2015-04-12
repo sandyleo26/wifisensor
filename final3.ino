@@ -24,7 +24,7 @@ ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW)
 // SD card    ******************************
 SdFat sd;
 SdFile myFile;
-char sdLogFile[] = "sdlog.csv";
+char sdLogFile[15] = "";
 char configFile[] = "config.txt";
 #define SDcsPin 9 // D9
 
@@ -81,22 +81,6 @@ void setup()
     Serial.println(getCaptureInt());
     Serial.println(getUploadInt());
     delay(5);
-}
-
-void echoEEPROM() {
-  for (int address = 0; address < 100; address++) {
-      int value = EEPROM.read(address);
-      Serial.print(address);
-      Serial.print("\t");
-      Serial.print(value, DEC);
-      Serial.println();
-      delay(10);
-  }
-  Serial.println(getAllEEPROM());
-  Serial.println(getWiFiName());
-  Serial.println(getWifiPass());
-  Serial.println(getIP());
-  Serial.println(getAPI());
 }
 
 void readUserSettingEEPROM()
@@ -163,6 +147,8 @@ void loop()
     // testWiFi();
     if (isCaptureMode()) {
         Serial.println(F("CaptureMode"));
+        digitalWrite(LDO, HIGH);
+        digitalWrite(WIFI_CP_PD, LOW);
         digitalWrite(NPN_Q1, HIGH);
         captureStoreData();
         captureCount++;
@@ -170,7 +156,9 @@ void loop()
         while (nextCaptureTime < t.unixtime) nextCaptureTime += captureInt;
     } else if (isUploadMode()) {
         Serial.println(F("UploadMode"));
+        digitalWrite(LDO, HIGH);
         digitalWrite(WIFI_CP_PD, HIGH);
+        digitalWrite(NPN_Q1, HIGH);
         uploadData();
         uploadCount++;
         DS3231_get(&t);
@@ -282,7 +270,7 @@ boolean createNewLogFile(boolean overwrite)
     DS3231_get(&t);
     while(i++<26) {
         sprintf(sdLogFile, fmt, t.year-2000, t.mon, t.mday, c++);
-        //Serial.print(F("log: ")); Serial.println(sdLogFile);
+        Serial.print(F("log: ")); Serial.println(sdLogFile);
         ifstream f(sdLogFile);
         if (f.good()) {
             f.close();
@@ -312,7 +300,7 @@ void captureStoreData()
     dtostrf(temp, 3, 1, ttmp);
     dtostrf(hum, 3, 1, htmp);
         
-    delay(1000);
+    delay(5);
     if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
 
     if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
@@ -379,7 +367,8 @@ boolean connectWiFi(){
     wifiName = getWiFiName();
     wifiPass = getWifiPass();
     Serial.println(F(CONCMD1));
-    Serial.print(F("AT+CWJAP=\"")); Serial.print(wifiName); Serial.print(F("\",\"")); Serial.print(wifiPass); Serial.println(F("\""));
+    Serial.print(F("AT+CWJAP=\""));
+    Serial.print(wifiName); Serial.print(F("\",\"")); Serial.print(wifiPass); Serial.println(F("\""));
     //Serial.println(String(F("AT+CWJAP=\"")) + String(wifiName) + String(F("\",\"")) + String(wifiPass) + String(F("\"")));
     //testMemSetup();
     while (!Serial.find("OK")) {
@@ -413,7 +402,7 @@ boolean transmitData(char* data, uint16_t lines) {
     uploadedLines += lines;
     i = 0;
     while (!Serial.find("SEND OK"))
-        if (i++>50) break;
+        if (i++>100) break;
     delay(1000);
     //uploadBlink();
 
@@ -468,6 +457,34 @@ String getWiFiName()
         val = EEPROM.read(i++);
     }
     return str;
+}
+
+void getWiFiName(char* buf)
+{
+    char val;
+    int i = 0;
+    val = EEPROM.read(i++);
+    while (val != ',') {
+        buf[i-1] = val;
+        val = EEPROM.read(i++);
+    }
+    buf[i] = '\0';
+}
+
+void getConfigByPos(char *buf, uint8_t pos)
+{
+    char val;
+    boolean flag = false;
+    int count = 0, i = 0, j = 0;
+    String str;
+    while (val != '$') {
+        val = EEPROM.read(i++);
+        if (val == ',') count++;
+        if (count == pos-1 && flag == false) {flag = true; continue;} 
+        if (count == pos) {break;}
+        if (flag) buf[j++] = val;
+    }
+    buf[j] = '\0';
 }
 
 String getConfigByPos(uint8_t pos)
