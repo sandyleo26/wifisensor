@@ -270,7 +270,7 @@ boolean createNewLogFile(boolean overwrite)
     DS3231_get(&t);
     while(i++<26) {
         sprintf(sdLogFile, fmt, t.year-2000, t.mon, t.mday, c++);
-        Serial.print(F("log: ")); Serial.println(sdLogFile);
+        //Serial.print(F("log: ")); Serial.println(sdLogFile);
         ifstream f(sdLogFile);
         if (f.good()) {
             f.close();
