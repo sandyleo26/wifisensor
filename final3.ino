@@ -89,7 +89,7 @@ void readUserSettingEEPROM()
     int addr = 0;
     if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
     if (!myFile.open(configFile, O_READ)) {
-        sd.errorHalt("index.txt!");
+        sd.errorHalt("config.txt!");
     }
 
     while (myFile.available()) {
@@ -141,10 +141,7 @@ void initialize()
 void loop()
 {
     DS3231_get(&t);
-    // testCaptureData();
-    // testMemSetup();
-    // testUploadData();
-    // testWiFi();
+
     if (isCaptureMode()) {
         Serial.println(F("CaptureMode"));
         digitalWrite(LDO, HIGH);
@@ -153,7 +150,7 @@ void loop()
         captureStoreData();
         captureCount++;
         DS3231_get(&t);
-        while (nextCaptureTime < t.unixtime) nextCaptureTime += captureInt;
+        while (nextCaptureTime <= t.unixtime) nextCaptureTime += captureInt;
     } else if (isUploadMode()) {
         Serial.println(F("UploadMode"));
         digitalWrite(LDO, HIGH);
@@ -162,7 +159,7 @@ void loop()
         uploadData();
         uploadCount++;
         DS3231_get(&t);
-        while (nextUploadTime < t.unixtime) nextUploadTime += uploadInt;
+        while (nextUploadTime <= t.unixtime) nextUploadTime += uploadInt;
     } else if (isSleepMode()) {
         Serial.println(F("SleepMode"));
         setAlarm1();
@@ -180,21 +177,15 @@ void setAlarm1()
     second = dayclock % 60;
     minute = (dayclock % 3600) / 60;
     hour = dayclock / 3600;
+    // Serial.println(F("setAlarm1"));
+    // Serial.print(t.hour); Serial.print(":"); Serial.print(t.min); Serial.print(":"); Serial.println(t.sec);
+    // Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.println(second);
 
-    // flags define what calendar component to be checked against the current time in order
-    // to trigger the alarm - see datasheet
-    // A1M1 (seconds) (0 to enable, 1 to disable)
-    // A1M2 (minutes) (0 to enable, 1 to disable)
-    // A1M3 (hour)    (0 to enable, 1 to disable) 
-    // A1M4 (day)     (0 to enable, 1 to disable)
-    // DY/DT          (dayofweek == 1/dayofmonth == 0)
+
     uint8_t flags[5] = { 0, 0, 0, 1, 1};
 
     // set Alarm1
     DS3231_set_a1(second, minute, hour, 0, flags);
-    // Serial.print(F("Hour: "));Serial.println(hour);
-    // Serial.print(F("Min: "));Serial.println(minute);
-    // Serial.print(F("Second: "));Serial.println(second);
 
     // activate Alarm1
     DS3231_set_creg(DS3231_INTCN | DS3231_A1IE);
@@ -202,7 +193,6 @@ void setAlarm1()
 
 void goSleep()
 {
-    //Serial.println(F("goSleep"));
     digitalWrite(NPN_Q1, LOW);
     digitalWrite(WIFI_CP_PD, LOW);
     delay(5);  // give some delay
@@ -316,7 +306,7 @@ void captureStoreData()
     myFile.print(ttmp); myFile.print(F(",")); myFile.print(htmp); myFile.println(F("$"));
 
     myFile.close();
-    captureBlink();    
+    //captureBlink();    
 }
 
 void uploadData()
@@ -325,7 +315,7 @@ void uploadData()
     char buffer[LINE_BUF_SIZE];
     if (!initWifiSerial()) return;
 
-    //Serial.println(F("connectWiFi"));
+    //Serial.println(F("connectWiFi"));fi
     if (connectWiFi()) {
         // initialize the SD card at SPI_HALF_SPEED to avoid bus errors with breadboards. use SPI_FULL_SPEED for better performance.
         if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
@@ -476,7 +466,6 @@ void getConfigByPos(char *buf, uint8_t pos)
     char val;
     boolean flag = false;
     int count = 0, i = 0, j = 0;
-    String str;
     while (val != '$') {
         val = EEPROM.read(i++);
         if (val == ',') count++;
@@ -597,12 +586,13 @@ void blink5()
 void debugPrintTime()
 {
     // display current time
-    String str;
     DS3231_get(&t);
-    //snprintf(buff, BUFF_MAX, "%02d:%02d:%02d,cap:%d,up:%d,",t.hour, t.min, t.sec, captureCount, uploadCount);
-    //Serial.println(buff);
-    str += String(t.year) + "-" + String(t.mon) + "-" + String(t.mday) + "," + 
-        String(t.hour) + ":" + String(t.min) + ":" + String(t.sec) + ",cap:" + String(captureCount) + ",up:" + String(uploadCount);
-    Serial.println(str);
+    char buff[BUFF_MAX];
+    snprintf(buff, BUFF_MAX, "%02d:%02d:%02d,cap:%d,up:%d,",t.hour, t.min, t.sec, captureCount, uploadCount);
+    Serial.println(buff);
+    // String str;
+    // str += String(t.year) + "-" + String(t.mon) + "-" + String(t.mday) + "," + 
+    //     String(t.hour) + ":" + String(t.min) + ":" + String(t.sec) + ",cap:" + String(captureCount) + ",up:" + String(uploadCount);
+    // Serial.println(str);
 }
 
