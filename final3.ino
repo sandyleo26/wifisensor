@@ -11,10 +11,14 @@
 #include "HTU21D.h"
 
 // RTC    ******************************
+#define VER "VER: final3.ino"
 #define SECONDS_DAY 86400
 #define BUFF_MAX 96
-#define LINE_BUF_SIZE 160
-#define MAX_LINES_PER_FILE 100
+#define MAX_LINES_PER_FILE 200
+#define MAX_LINES_PER_UPLOAD 6
+#define LINE_BUF_SIZE 40*MAX_LINES_PER_UPLOAD
+#define WIFI_BUF_MAX 8
+
 
 ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW) 
 {
@@ -25,7 +29,9 @@ ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW)
 SdFat sd;
 SdFile myFile;
 char sdLogFile[15] = "";
+char sdSysLog[] = "syslog.txt";
 char configFile[] = "config.txt";
+char configFileBak[] = "cfg.bak";
 #define SDcsPin 9 // D9
 
 // HTU21D    ******************************
@@ -74,10 +80,15 @@ void setup()
     chip.sleepInterruptSetup();    // setup sleep function on the ATmega328p. Power-down mode is used here
     nextCaptureTime = t.unixtime;
     nextUploadTime = t.unixtime + uploadInt;
-    Serial.println(getWiFiName());
-    Serial.println(getWifiPass());
-    Serial.println(getIP());
-    Serial.println(getAPI());
+    char buffer[32];
+    getWiFiName(buffer);
+    Serial.println(buffer);
+    getWifiPass(buffer);
+    Serial.println(buffer);
+    getIP(buffer);
+    Serial.println(buffer);
+    getAPI(buffer);
+    Serial.println(buffer);
     Serial.println(getCaptureInt());
     Serial.println(getUploadInt());
     delay(5);
@@ -87,9 +98,15 @@ void readUserSettingEEPROM()
 {
     int i = 0;
     int addr = 0;
-    if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
+    // if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) sd.initErrorHalt();
+    if (myFile.open(configFile, O_EXCL | O_CREAT)) {
+        myFile.close();
+        sd.errorHalt("O_EXCL");
+    }
     if (!myFile.open(configFile, O_READ)) {
-        sd.errorHalt("config.txt!");
+        if (!myFile.open(configFileBak, O_READ)) {
+            sd.errorHalt(configFileBak);
+        }
     }
 
     while (myFile.available()) {
@@ -107,13 +124,15 @@ void readUserSettingEEPROM()
 void initialize()
 {
     Serial.begin(57600);
-    delay(1000);
+    delay(5);
+    Serial.println(F(VER));
     pinMode(LDO, OUTPUT);
-    pinMode(LED, OUTPUT);
+    //pinMode(LED, OUTPUT);
     pinMode(NPN_Q1, OUTPUT); // Turn on DHT & SD
-    pinMode(WIFI_CP_PD, OUTPUT); // Turn on WiFi  
+    pinMode(WIFI_CP_PD, OUTPUT); // Turn on WiFi 
+    pinMode(SDcsPin, OUTPUT); 
     digitalWrite(LDO, HIGH);
-    digitalWrite(LED, HIGH);
+    //digitalWrite(LED, HIGH);
     digitalWrite(NPN_Q1, HIGH);
     digitalWrite(WIFI_CP_PD, HIGH);
 
@@ -126,7 +145,13 @@ void initialize()
     // 2. check SD
     // initialize SD card on the SPI bus
     //todo: get the line number to ignore
-    if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
+    int i = 0;
+    while (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {
+        delay(1000);
+        Serial.print(++i); Serial.println(F(" initialize fail."));
+        // sysLog(F("initialize."));
+        if (i > 10) sd.initErrorHalt();
+    }
     createNewLogFile();
     
     // 2. check wifi connection
@@ -147,19 +172,21 @@ void loop()
         digitalWrite(LDO, HIGH);
         digitalWrite(WIFI_CP_PD, LOW);
         digitalWrite(NPN_Q1, HIGH);
+        pinMode(SDcsPin, OUTPUT);
         captureStoreData();
         captureCount++;
         DS3231_get(&t);
-        while (nextCaptureTime <= t.unixtime) nextCaptureTime += captureInt;
+        while (nextCaptureTime <= t.unixtime + 1) nextCaptureTime += captureInt;
     } else if (isUploadMode()) {
         Serial.println(F("UploadMode"));
         digitalWrite(LDO, HIGH);
         digitalWrite(WIFI_CP_PD, HIGH);
         digitalWrite(NPN_Q1, HIGH);
+        pinMode(SDcsPin, OUTPUT);
         uploadData();
         uploadCount++;
         DS3231_get(&t);
-        while (nextUploadTime <= t.unixtime) nextUploadTime += uploadInt;
+        while (nextUploadTime <= t.unixtime + 1) nextUploadTime += uploadInt;
     } else if (isSleepMode()) {
         Serial.println(F("SleepMode"));
         setAlarm1();
@@ -181,7 +208,6 @@ void setAlarm1()
     // Serial.print(t.hour); Serial.print(":"); Serial.print(t.min); Serial.print(":"); Serial.println(t.sec);
     // Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.println(second);
 
-
     uint8_t flags[5] = { 0, 0, 0, 1, 1};
 
     // set Alarm1
@@ -201,24 +227,25 @@ void goSleep()
     chip.turnOffWDT();
     chip.turnOffBOD();
     chip.goodNight();
-    if (DS3231_triggered_a1()) {
-        delay(5);
+    // wake up here
+    chip.turnOnADC();    // enable ADC after processor wakes up
+    chip.turnOnSPI();   // turn on SPI bus once the processor wakes up
+    delay(100);    // important delay to ensure SPI bus is properly activated
+    //if (DS3231_triggered_a1()) {
         //Serial.println(F("**Alarm has been triggered**"));
         DS3231_clear_a1f();
-    }
-    //chip.turnOnADC();    // enable ADC after processor wakes up
-    chip.turnOnSPI();   // turn on SPI bus once the processor wakes up
-    delay(5);    // important delay to ensure SPI bus is properly activated
+        delay(10);
+    //}
 }
 
 bool isCaptureMode()
 {
-  return int32_t(nextCaptureTime - t.unixtime) < 1;
+  return int32_t(nextCaptureTime - t.unixtime) <= 1;
 }
 
 bool isUploadMode()
 {
-    return int32_t(nextUploadTime - t.unixtime) < 1;
+    return int32_t(nextUploadTime - t.unixtime) <= 1;
 }
 
 bool isSleepMode()
@@ -283,7 +310,6 @@ void captureStoreData()
     //char raw[64] = "9999999,2015-02-27,01:44:33,-38.5,66.6$";
     char ttmp[8]; 
     char htmp[8];
-    String str;
     float temp, hum;
     temp = htu.readTemperature();
     hum = htu.readHumidity();
@@ -291,7 +317,7 @@ void captureStoreData()
     dtostrf(hum, 3, 1, htmp);
         
     delay(5);
-    if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
+    if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) sd.initErrorHalt();
 
     if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
         createNewLogFile();
@@ -318,7 +344,7 @@ void uploadData()
     //Serial.println(F("connectWiFi"));fi
     if (connectWiFi()) {
         // initialize the SD card at SPI_HALF_SPEED to avoid bus errors with breadboards. use SPI_FULL_SPEED for better performance.
-        if (!sd.begin(SDcsPin, SPI_HALF_SPEED)) sd.initErrorHalt();
+        if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) sd.initErrorHalt();
         ifstream sdin(sdLogFile);         
 
         while (sdin.getline(buffer+offset, LINE_BUF_SIZE-offset, '\n') || sdin.gcount()) {
@@ -334,14 +360,14 @@ void uploadData()
             offset = strlen(buffer);
 
             // buffer: "133,2015-02-27,01:44:33,25.6,66.6$";
-            if (multilines == 4) {
+            if (multilines == MAX_LINES_PER_UPLOAD) {
                 if (!transmitData(buffer, multilines))
                     return;
                 multilines = 0;
                 offset = 0;
             } 
         }
-        if (multilines!=4 && uploadedLines+multilines>=MAX_LINES_PER_FILE) {
+        if (multilines!=MAX_LINES_PER_UPLOAD && uploadedLines+multilines>=MAX_LINES_PER_FILE) {
             if (multilines>0) {
                 if (!transmitData(buffer, multilines))
                     return;
@@ -351,14 +377,11 @@ void uploadData()
     }
 }
 
-boolean connectWiFi(){
+boolean connectWiFi1(){
     uint8_t i = 0;
-    String wifiName, wifiPass;
-    wifiName = getWiFiName();
-    wifiPass = getWifiPass();
+    char buffer[16];
     Serial.println(F(CONCMD1));
-    Serial.print(F("AT+CWJAP=\""));
-    Serial.print(wifiName); Serial.print(F("\",\"")); Serial.print(wifiPass); Serial.println(F("\""));
+    cwjap();
     //Serial.println(String(F("AT+CWJAP=\"")) + String(wifiName) + String(F("\",\"")) + String(wifiPass) + String(F("\"")));
     //testMemSetup();
     while (!Serial.find("OK")) {
@@ -367,14 +390,53 @@ boolean connectWiFi(){
     return true;
 }
 
+boolean connectWiFi() {
+    uint8_t i = 0;
+    uint8_t n = 0;
+    uint8_t j = 0;
+    char buffer[WIFI_BUF_MAX];
+
+    Serial.println(F(CONCMD1));
+    cwjap();
+    while (1) {
+        if (i++>25) return false;
+        delay(1000);
+        if ((n = Serial.available()) != 0) {
+            j = 0;
+            while (j<WIFI_BUF_MAX-1)
+                buffer[j++] = Serial.read();
+            buffer[WIFI_BUF_MAX-1] = '\0';
+            if (strstr(buffer, "OK")) {
+                //Serial.println(buffer);
+                break;
+            }
+            else if (strstr(buffer, "FAIL")) {
+                // Serial.println(buffer);
+                // delay(2000);
+                cwjap();
+            }
+        }
+    }
+    return true;
+}
+
+void cwjap() {
+    char buffer[16];
+    Serial.print(F("AT+CWJAP=\""));
+    getWiFiName(buffer);
+    Serial.print(buffer); Serial.print(F("\",\""));
+    getWifiPass(buffer);
+    Serial.print(buffer); Serial.println(F("\""));
+}
+
 boolean transmitData(char* data, uint16_t lines) {  
 
-    String cmd;
+    char cmd[40];
     int length;
     uint8_t i = 0;
 
-    cmd = getAPI();
-    length = cmd.length() + strlen(data) + 2;
+    getAPI(cmd);
+    length = strlen(cmd) + strlen(data) + 2;
 
     if (!initDataSend(length)) return false;
 
@@ -414,7 +476,9 @@ boolean initWifiSerial()
 
 boolean initDataSend(int length)
 {
-    Serial.print(F(IPcmd)); Serial.print(getIP()); Serial.println(F("\",80"));
+    char buf[20];
+    getIP(buf);
+    Serial.print(F(IPcmd)); Serial.print(buf); Serial.println(F("\",80"));
     delay(5);
     if(Serial.find("Error")) return false;
     Serial.print(F("AT+CIPSEND="));
@@ -458,7 +522,7 @@ void getWiFiName(char* buf)
         buf[i-1] = val;
         val = EEPROM.read(i++);
     }
-    buf[i] = '\0';
+    buf[i-1] = '\0';
 }
 
 void getConfigByPos(char *buf, uint8_t pos)
@@ -476,57 +540,33 @@ void getConfigByPos(char *buf, uint8_t pos)
     buf[j] = '\0';
 }
 
-String getConfigByPos(uint8_t pos)
+void getWifiPass(char* buf)
 {
-    char val;
-    boolean flag = false;
-    int count = 0, i = 0;
-    String str;
-    while (val != '$') {
-        val = EEPROM.read(i++);
-        if (val == ',') count++;
-        if (count == pos-1 && flag == false) {flag = true; continue;} 
-        if (count == pos) {break;}
-        if (flag) str += val;
-    }
-    return str;
+    getConfigByPos(buf, 2);
 }
 
-String getWifiPass()
+void getIP(char* buf)
 {
-    return getConfigByPos(2);
+    getConfigByPos(buf, 3);
 }
 
-String getIP()
+void getAPI(char* buf)
 {
-    return getConfigByPos(3);
-}
-
-String getAPI()
-{
-    return getConfigByPos(4);
+    getConfigByPos(buf, 4);
 }
 
 uint16_t getCaptureInt()
 {
-    return getConfigByPos(5).toInt();
+    char buf[8];
+    getConfigByPos(buf, 5);
+    return atoi(buf);
 }
 
 uint16_t getUploadInt()
 {
-    char val;
-    boolean flag = false;
-    int count = 0, i = 0;
-    String str;
-    val = EEPROM.read(i++);
-    while (val != '$') {
-        if (flag) str += val;
-        if (val == ',') count++;
-        if (count == 5) {flag = true;}
-        val = EEPROM.read(i++);
-    }
-        
-    return str.toInt();
+    char buf[8];
+    getConfigByPos(buf, 6);
+    return atoi(buf);
 }
 
 void testWiFi()
@@ -541,6 +581,34 @@ void testWiFi()
     if (connectWiFi()) {
         transmitData(raw, 1);
     }
+}
+
+void sysLog(const __FlashStringHelper* msg)
+{
+    // if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {
+    //     Serial.println(F("initErrorHalt"));
+    //     return;
+    // }
+    if (!myFile.open(sdSysLog, O_RDWR | O_CREAT | O_AT_END)) {
+        myFile.print(t.year); myFile.print(t.mon); myFile.print(t.mday);myFile.print(F(" "));
+        myFile.print(t.hour); myFile.print(F(":")); myFile.print(t.min); myFile.print(F(":")); myFile.print(t.sec);
+        myFile.print(F("  info:")); myFile.println(msg);
+    }
+    myFile.close();
+}
+
+void sysLog(const char* msg)
+{
+    // if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {
+    //     Serial.println(F("initErrorHalt"));
+    //     return;
+    // }
+    if (!myFile.open(sdSysLog, O_RDWR | O_CREAT | O_AT_END)) {
+        myFile.print(t.year); myFile.print(t.mon); myFile.print(t.mday);myFile.print(F(" "));
+        myFile.print(t.hour); myFile.print(F(":")); myFile.print(t.min); myFile.print(F(":")); myFile.print(t.sec);
+        myFile.print(F("  info:")); myFile.println(msg);
+    }
+    myFile.close();
 }
 
 int freeRam () {
