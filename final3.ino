@@ -15,9 +15,9 @@
 #define SECONDS_DAY 86400
 #define BUFF_MAX 96
 #define MAX_LINES_PER_FILE 200
-#define MAX_LINES_PER_UPLOAD 6
+#define MAX_LINES_PER_UPLOAD 5
 #define LINE_BUF_SIZE 40*MAX_LINES_PER_UPLOAD
-#define WIFI_BUF_MAX 8
+#define WIFI_BUF_MAX 64
 
 
 ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW) 
@@ -65,6 +65,8 @@ struct ts t;
 //#define IPcmd "AT+CIPSTART=\"TCP\",\"184.106.153.149\",80" // ThingSpeak
 //#define IPcmd "AT+CIPSTART=\"TCP\",\"69.195.124.239\",80" // meetisan
 #define IPcmd "AT+CIPSTART=\"TCP\",\""
+#define getPort "\",80"
+#define XXXX "XXXX"
 
 //String GET = "GET /update?key=8LHRO7Q7L74WVJ07&field1=";
 
@@ -168,7 +170,7 @@ void loop()
     DS3231_get(&t);
 
     if (isCaptureMode()) {
-        Serial.println(F("CaptureMode"));
+        Serial.println(F("Capture"));
         digitalWrite(LDO, HIGH);
         digitalWrite(WIFI_CP_PD, LOW);
         digitalWrite(NPN_Q1, HIGH);
@@ -178,7 +180,7 @@ void loop()
         DS3231_get(&t);
         while (nextCaptureTime <= t.unixtime + 1) nextCaptureTime += captureInt;
     } else if (isUploadMode()) {
-        Serial.println(F("UploadMode"));
+        Serial.println(F("Upload"));
         digitalWrite(LDO, HIGH);
         digitalWrite(WIFI_CP_PD, HIGH);
         digitalWrite(NPN_Q1, HIGH);
@@ -188,7 +190,7 @@ void loop()
         DS3231_get(&t);
         while (nextUploadTime <= t.unixtime + 1) nextUploadTime += uploadInt;
     } else if (isSleepMode()) {
-        Serial.println(F("SleepMode"));
+        Serial.println(F("Sleep"));
         setAlarm1();
         goSleep();
     }
@@ -230,7 +232,7 @@ void goSleep()
     // wake up here
     chip.turnOnADC();    // enable ADC after processor wakes up
     chip.turnOnSPI();   // turn on SPI bus once the processor wakes up
-    delay(100);    // important delay to ensure SPI bus is properly activated
+    delay(500);    // important delay to ensure SPI bus is properly activated
     //if (DS3231_triggered_a1()) {
         //Serial.println(F("**Alarm has been triggered**"));
         DS3231_clear_a1f();
@@ -256,18 +258,6 @@ bool isSleepMode()
     alarm = (capAlarm<upAlarm) ? capAlarm : upAlarm;
     // sleep&wake needs at most 2 sec so any value below is not worth while
     return alarm>1;
-}
-
-boolean isNewDay()
-{
-    int mday = (sdLogFile[5]-'0') * 10 + (sdLogFile[6]-'0');
-    if (mday == t.mday) {
-        //Serial.print(F("Same: ")); Serial.print(sdLogFile[5]); Serial.print(sdLogFile[6]); Serial.print(F(" ")); Serial.println(t.mday);
-        return true;
-    } else {
-        //Serial.print(F("diff: ")); Serial.print(sdLogFile[5]); Serial.print(sdLogFile[6]); Serial.print(F(" ")); Serial.println(t.mday);
-        return false;
-    }
 }
 
 void createNewLogFile()
@@ -377,55 +367,44 @@ void uploadData()
     }
 }
 
-boolean connectWiFi1(){
-    uint8_t i = 0;
-    char buffer[16];
-    Serial.println(F(CONCMD1));
-    cwjap();
-    //Serial.println(String(F("AT+CWJAP=\"")) + String(wifiName) + String(F("\",\"")) + String(wifiPass) + String(F("\"")));
-    //testMemSetup();
-    while (!Serial.find("OK")) {
-        if (i++>15) return false;
-    }
-    return true;
-}
-
 boolean connectWiFi() {
     uint8_t i = 0;
     uint8_t n = 0;
     uint8_t j = 0;
+    uint8_t k = 0;
     char buffer[WIFI_BUF_MAX];
 
     Serial.println(F(CONCMD1));
-    cwjap();
+    cwjap(true);
     while (1) {
-        if (i++>25) return false;
+        if (i++>20) return false;
         delay(1000);
         if ((n = Serial.available()) != 0) {
             j = 0;
-            while (j<WIFI_BUF_MAX-1)
+            k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
+            while (j<k)
                 buffer[j++] = Serial.read();
-            buffer[WIFI_BUF_MAX-1] = '\0';
+            buffer[k] = '\0';
             if (strstr(buffer, "OK")) {
-                //Serial.println(buffer);
                 break;
-            }
-            else if (strstr(buffer, "FAIL")) {
-                // Serial.println(buffer);
-                // delay(2000);
-                cwjap();
+            } else if (strstr(buffer, "FAIL")) {
+                cwjap(true);
+            } else if (strstr(buffer, "ready")) {
+                cwjap(false);
+                delay(2000);
+                cwjap(true);
             }
         }
     }
     return true;
 }
 
-void cwjap() {
+void cwjap(boolean real) {
     char buffer[16];
     Serial.print(F("AT+CWJAP=\""));
-    getWiFiName(buffer);
+    if (real) getWiFiName(buffer);
     Serial.print(buffer); Serial.print(F("\",\""));
-    getWifiPass(buffer);
+    if (real) getWifiPass(buffer);
     Serial.print(buffer); Serial.println(F("\""));
 }
 
@@ -441,23 +420,24 @@ boolean transmitData(char* data, uint16_t lines) {
     if (!initDataSend(length)) return false;
 
     while (!Serial.find(">")) {
-        if (i++>30) return false;
-        Serial.println(F("AT+CIPCLOSE"));
-        if (!initWifiSerial()) return false;
+        if (i++>20) return false;
+        delay(200);
+        // Serial.println(F("AT+CIPCLOSE"));
+        // if (!initWifiSerial()) return false;
 
-        if (connectWiFi()) {
-            if (!initDataSend(length)) return false;
-        }
+        // if (connectWiFi()) {
+        //     if (!initDataSend(length)) return false;
+        // }
     }
     Serial.print(cmd); Serial.print(data); Serial.print(F("\r\n"));
     //Serial.println(F("AT+CIPCLOSE"));
     uploadedLines += lines;
     i = 0;
-    while (!Serial.find("SEND OK"))
-        if (i++>100) break;
-    delay(1000);
+    while (!Serial.find("SEND OK")) {
+        if (i++>20) break;
+        delay(200);
+    }
     //uploadBlink();
-
     return true;
 }
 
@@ -469,18 +449,47 @@ boolean initWifiSerial()
     while (!Serial.find("OK")) {
         if (i++>10) return false;
         Serial.println(F("AT"));
-        delay(5);
+        delay(100);
     }
     return true;
 }
 
+void cipstart() {
+    char buffer[WIFI_BUF_MAX];
+    Serial.print(F(IPcmd));
+    getIP(buffer);
+    Serial.print(buffer);
+    Serial.println(F(getPort));
+}
+
 boolean initDataSend(int length)
 {
-    char buf[20];
-    getIP(buf);
-    Serial.print(F(IPcmd)); Serial.print(buf); Serial.println(F("\",80"));
-    delay(5);
-    if(Serial.find("Error")) return false;
+    uint8_t i = 0;
+    uint8_t n = 0;
+    uint8_t j = 0;
+    uint8_t k = 0;
+    char buffer[WIFI_BUF_MAX];
+    Serial.find("ERROR");
+    cipstart();
+    delay(2000);
+    while (1) {
+        if (i++>20) return false;
+        delay(1000);
+        if ((n = Serial.available()) != 0) {
+            j = 0;
+            k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
+            while (j<k)
+                buffer[j++] = Serial.read();
+            buffer[k] = '\0';
+            if (strstr(buffer, "CONNECT")) {
+                break;
+            } else if (strstr(buffer, "ERROR")) {
+                cipstart();
+            }
+        }
+    }
+    Serial.println(F("AT+CIPMODE=0"));
+    delay(100);
     Serial.print(F("AT+CIPSEND="));
     Serial.println(length);
     delay(5);

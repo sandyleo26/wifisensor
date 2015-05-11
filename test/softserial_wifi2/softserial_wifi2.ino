@@ -8,11 +8,11 @@
 #define WIFI_CP_PD 3 // D3 control ESP8266
 #define NPN_Q1 4 // D4 control DHT & SD Card
 #define WIFI_BUF_MAX 64
-#define VER "microsd.ino"
 
 
-#define SSID "NetComm 3521"
-#define PASS "Thawifi2"
+
+#define SSID "iPhone"
+#define PASS "Fh818891"
 #define IP "69.195.124.239" // thingspeak.com
 String GET = "GET /~meetisan/r.php?k=test3&d=";
 SoftwareSerial mySerial(10, 11); // RX, TX
@@ -101,6 +101,7 @@ boolean connectWiFi() {
     uint8_t i = 0;
     uint8_t n = 0;
     uint8_t j = 0;
+    uint8_t k = 0;
     char buffer[WIFI_BUF_MAX];
     mySerial.println("AT+CWMODE=1");
     delay(2000);
@@ -111,22 +112,25 @@ boolean connectWiFi() {
     cmd+="\"";
     sendDebug(cmd);
     while (1) {
-        if (i++>100) return false;
+        if (i++>25) return false;
         delay(1000);
         if ((n = mySerial.available()) != 0) {
             j = 0;
-            while (j<WIFI_BUF_MAX-1)
+            k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
+            while (j<k)
                 buffer[j++] = mySerial.read();
-            buffer[WIFI_BUF_MAX-1] = '\0';
+            buffer[k] = '\0';
             Serial.println(buffer);
             if (strstr(buffer, "OK")) {
                 Serial.print(i);
                 Serial.println(" RECEIVED: OK");
                 return true;
-            }
-            else if (strstr(buffer, "FAIL")) {
+            } else if (strstr(buffer, "FAIL")) {
                 Serial.print(i);
                 Serial.println("RECEIVED: FAIL");
+            } else if (strstr(buffer, "ready")) {
+                Serial.print(i);
+                Serial.println("RECEIVED: ready");
             }
         }
     }
@@ -138,15 +142,19 @@ boolean waitCmd(char *cmd)
     uint8_t i = 0;
     uint8_t n = 0;
     uint8_t j = 0;
+    uint8_t k = 0;
+
     char buffer[WIFI_BUF_MAX];
     while (1) {
         if (i++>100) return false;
         delay(1000);
+
         if ((n = mySerial.available()) != 0) {
             j = 0;
-            while (j<WIFI_BUF_MAX-1)
+            k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
+            while (j<k)
                 buffer[j++] = mySerial.read();
-            buffer[WIFI_BUF_MAX-1] = '\0';
+            buffer[k] = '\0';
             Serial.println(buffer);
             if (strstr(buffer, cmd)) {
                 Serial.print(i);

@@ -1,6 +1,6 @@
 //****************************************************************
 
-// Smart TH WiFi Sensor code
+// test only the wifi part of code
 
 //****************************************************************
 #include <ds3231.h>
@@ -55,11 +55,13 @@ struct ts t;
 
 // wifi
 //#define wifiName "iPhone"  //change to your WIFI name
-//#define wifiName "TEHS_53281F"  //change to your WIFI name
-#define wifiName "NetComm 3521"  //change to your WIFI name
 //#define wifiPass "Fh818891"  //wifi password
-//#define wifiPass "8847EA0B45"  //wifi password
-#define wifiPass "Thawifi2"  //wifi password
+// #define wifiName "Elonihp"  //change to your WIFI name
+// #define wifiPass "qazwsxedc"  //wifi password
+#define wifiName "TEHS_53281F"  //change to your WIFI name
+#define wifiPass "8847EA0B45"  //wifi password
+//#define wifiName "NetComm 3521"  //change to your WIFI name
+//#define wifiPass "Thawifi2"  //wifi password
 #define CONCMD1 "AT+CWMODE=1"
 //#define IPcmd "AT+CIPSTART=\"TCP\",\"184.106.153.149\",80" // ThingSpeak
 //#define IPcmd "AT+CIPSTART=\"TCP\",\"69.195.124.239\",80" // meetisan
@@ -67,7 +69,12 @@ struct ts t;
 #define getIP "69.195.124.239"
 #define getAPI "GET /~meetisan/r.php?k=test3&d="
 
-//String GET = "GET /update?key=8LHRO7Q7L74WVJ07&field1=";
+//#define getIP "184.106.153.149"
+//#define getAPI "/update?api_key=8LHRO7Q7L74WVJ07&field1="
+
+#define getIP "119.9.30.179"
+#define getPort "\",80"
+#define getPort "\",12345"
 
 
 // setup ****************************************************************
@@ -98,8 +105,32 @@ void initialize()
     DS3231_clear_a1f();
     DS3231_get(&t);
 
-    if (initWifiSerial())
+    //Serial.println(F("AT+CIPMUX=0"));
+    if (initWifiSerial()) {
         connectWiFi();
+
+    }
+
+    // Serial.println(F("AT+CIFSR"));
+
+    // uint8_t i = 0;
+    // uint8_t n = 0;
+    // uint8_t j = 0;
+    // uint8_t k = 0;
+    // char buffer[WIFI_BUF_MAX];
+
+    // while (1) {
+    //     if (i++>25) break;
+    //     delay(1000);
+    //     if ((n = Serial.available()) != 0) {
+    //         j = 0;
+    //         k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
+    //         while (j<k)
+    //             buffer[j++] = Serial.read();
+    //         buffer[k] = '\0';
+    //         Serial.println(buffer);
+    //     }
+    // }
 }
 
 void loop()
@@ -110,27 +141,62 @@ void loop()
     delay(20000);
 }
 
+// original recipe
+// boolean connectWiFi() {
+//     uint8_t i = 0;
+//     uint8_t n = 0;
+//     uint8_t j = 0;
+//     char buffer[WIFI_BUF_MAX];
+
+//     Serial.println(F(CONCMD1));
+//     cwjap();
+//     while (1) {
+//         if (i++>20) return false;
+//         delay(1000);
+//         if ((n = Serial.available()) != 0) {
+//             j = 0;
+//             while (j<WIFI_BUF_MAX-1)
+//                 buffer[j++] = Serial.read();
+//             buffer[WIFI_BUF_MAX-1] = '\0';
+//             if (strstr(buffer, "OK")) {
+//                 break;
+//             }
+//             else if (strstr(buffer, "FAIL")) {
+//                 cwjap();
+//             }
+//         }
+//     }
+//     return true;
+// }
+
+// detect ready and retry
 boolean connectWiFi() {
     uint8_t i = 0;
     uint8_t n = 0;
     uint8_t j = 0;
+    uint8_t k = 0;
     char buffer[WIFI_BUF_MAX];
 
-    Serial.println(F(CONCMD1));
-    cwjap();
+    //Serial.println(F(CONCMD1));
+    cwjap924();
+    //delay(15000);
     while (1) {
-        if (i++>0) return false;
-        delay(15000);
+        if (i++>20) return false;
+        delay(1000);
         if ((n = Serial.available()) != 0) {
             j = 0;
-            while (j<WIFI_BUF_MAX-1)
+            k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
+            while (j<k)
                 buffer[j++] = Serial.read();
-            buffer[WIFI_BUF_MAX-1] = '\0';
+            buffer[k] = '\0';
             if (strstr(buffer, "OK")) {
                 break;
-            }
-            else if (strstr(buffer, "FAIL")) {
-                cwjap();
+            } else if (strstr(buffer, "FAIL")) {
+                //cwjap();
+            } else if (strstr(buffer, "ready")) {
+                cwjapxxx();
+                delay(3000);
+                //cwjap();
             }
         }
     }
@@ -171,10 +237,22 @@ boolean connectWiFi() {
 //     }
 // }
 
-void cwjap() {
+void cwjap950() {
+    //Serial.println(F("AT+CWJAP_CUR=\"Elonihp\",\"qazwsxedc\"")); 
+    Serial.println(F("AT+CWJAP_CUR=\"iPhone\",\"Fh818891\"")); 
+    // Serial.print(F(wifiName)); Serial.print(F("\",\"")); 
+    // Serial.print(F(wifiPass)); Serial.println(F("\""));
+}
+void cwjap924() {
     Serial.print(F("AT+CWJAP=\"")); 
     Serial.print(F(wifiName)); Serial.print(F("\",\"")); 
     Serial.print(F(wifiPass)); Serial.println(F("\""));
+}
+
+void cwjapxxx() {
+    Serial.print(F("AT+CWJAP_CUR=\"")); 
+    Serial.print(F("XXXX")); Serial.print(F("\",\"")); 
+    Serial.print(F("XXXX")); Serial.println(F("\""));
 }
 
 boolean transmitData(char* data, uint16_t lines) {  
@@ -219,16 +297,43 @@ boolean initWifiSerial()
     while (!Serial.find("OK")) {
         if (i++>10) return false;
         Serial.println(F("AT"));
-        delay(10);
+        delay(100);
     }
     return true;
 }
 
+void cipstart() {
+    Serial.print(F(IPcmd)); Serial.print(F(getIP)); Serial.println(F(getPort));
+}
+
 boolean initDataSend(int length)
 {
-    Serial.print(F(IPcmd)); Serial.print(F(getIP)); Serial.println(F("\",80"));
-    delay(5);
-    if(Serial.find("Error")) return false;
+    uint8_t i = 0;
+    uint8_t n = 0;
+    uint8_t j = 0;
+    uint8_t k = 0;
+    char buffer[WIFI_BUF_MAX];
+    Serial.find("ERROR");
+    cipstart();
+    delay(2000);
+    while (1) {
+        if (i++>20) return false;
+        delay(1000);
+        if ((n = Serial.available()) != 0) {
+            j = 0;
+            k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
+            while (j<k)
+                buffer[j++] = Serial.read();
+            buffer[k] = '\0';
+            if (strstr(buffer, "CONNECT")) {
+                break;
+            } else if (strstr(buffer, "ERROR")) {
+                cipstart();
+            }
+        }
+    }
+    Serial.println(F("AT+CIPMODE=0"));
+    delay(100);
     Serial.print(F("AT+CIPSEND="));
     Serial.println(length);
     delay(5);
