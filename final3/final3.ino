@@ -51,6 +51,7 @@ PowerSaver chip;  // declare object for PowerSaver class
 uint32_t captureCount = 0, uploadCount = 0, uploadedLines = 0;
 uint32_t nextCaptureTime, nextUploadTime, alarm;
 struct ts t;
+boolean wifiConnected = false;
 
 // LED
 #define LED 2
@@ -62,14 +63,9 @@ struct ts t;
 //#define SSID "iPhone"  //change to your WIFI name
 //#define PASS "s32nzqaofv9tv"  //wifi password
 #define CONCMD1 "AT+CWMODE=1"
-//#define IPcmd "AT+CIPSTART=\"TCP\",\"184.106.153.149\",80" // ThingSpeak
-//#define IPcmd "AT+CIPSTART=\"TCP\",\"69.195.124.239\",80" // meetisan
 #define IPcmd "AT+CIPSTART=\"TCP\",\""
 #define getPort "\",80"
 #define XXXX "XXXX"
-
-//String GET = "GET /update?key=8LHRO7Q7L74WVJ07&field1=";
-
 
 // setup ****************************************************************
 void setup()
@@ -82,6 +78,8 @@ void setup()
     chip.sleepInterruptSetup();    // setup sleep function on the ATmega328p. Power-down mode is used here
     nextCaptureTime = t.unixtime;
     nextUploadTime = t.unixtime + uploadInt;
+
+    //roundTime2Quarter();
     char buffer[32];
     getWiFiName(buffer);
     Serial.println(buffer);
@@ -168,7 +166,6 @@ void initialize()
 void loop()
 {
     DS3231_get(&t);
-
     if (isCaptureMode()) {
         Serial.println(F("Capture"));
         digitalWrite(LDO, HIGH);
@@ -217,6 +214,29 @@ void setAlarm1()
 
     // activate Alarm1
     DS3231_set_creg(DS3231_INTCN | DS3231_A1IE);
+}
+
+void roundTime2Quarter()
+{
+    uint32_t dayclock, tempUnixTime;
+    uint8_t second, minute, hour;
+    dayclock = (uint32_t)t.unixtime % SECONDS_DAY;
+    second = dayclock % 60;
+    minute = (dayclock % 3600) / 60;
+    hour = dayclock / 3600;
+    tempUnixTime = t.unixtime - dayclock + 3600*hour;
+
+    nextCaptureTime = tempUnixTime + (minute/15+1)*900;
+    //nextCaptureTime = t.unixtime;
+    nextUploadTime = nextCaptureTime + uploadInt;
+    //dayclock = (uint32_t)tempCaptureTime % SECONDS_DAY;
+
+    // second = dayclock % 60;
+    // minute = (dayclock % 3600) / 60;
+    // hour = dayclock / 3600;
+
+    // Serial.print(t.hour); Serial.print(":"); Serial.print(t.min); Serial.print(":"); Serial.println(t.sec);
+    // Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.println(second);
 }
 
 void goSleep()
@@ -374,8 +394,11 @@ boolean connectWiFi() {
     uint8_t k = 0;
     char buffer[WIFI_BUF_MAX];
 
-    Serial.println(F(CONCMD1));
+    //Serial.println(F(CONCMD1));
+    if (wifiConnected) return true;
+
     cwjap(true);
+    delay(15000);
     while (1) {
         if (i++>20) return false;
         delay(1000);
@@ -391,11 +414,12 @@ boolean connectWiFi() {
                 cwjap(true);
             } else if (strstr(buffer, "ready")) {
                 cwjap(false);
-                delay(2000);
+                delay(3000);
                 cwjap(true);
             }
         }
     }
+    wifiConnected = true;
     return true;
 }
 
@@ -406,6 +430,12 @@ void cwjap(boolean real) {
     Serial.print(buffer); Serial.print(F("\",\""));
     if (real) getWifiPass(buffer);
     Serial.print(buffer); Serial.println(F("\""));
+}
+
+void cwjapxxx() {
+    Serial.print(F("AT+CWJAP_CUR=\"")); 
+    Serial.print(F("XXXX")); Serial.print(F("\",\"")); 
+    Serial.print(F("XXXX")); Serial.println(F("\""));
 }
 
 boolean transmitData(char* data, uint16_t lines) {  
@@ -488,7 +518,7 @@ boolean initDataSend(int length)
             }
         }
     }
-    Serial.println(F("AT+CIPMODE=0"));
+    //Serial.println(F("AT+CIPMODE=0"));
     delay(100);
     Serial.print(F("AT+CIPSEND="));
     Serial.println(length);
@@ -578,20 +608,6 @@ uint16_t getUploadInt()
     return atoi(buf);
 }
 
-void testWiFi()
-{
-    String data, stime;
-    char raw[64] = "1,2015-02-27,01:44:33,38.5,66.6$";  
-    
-    Serial.println(F("testWiFi"));
-    if (!initWifiSerial()) return;
-
-    //Serial.println(F("connectWiFi"));
-    if (connectWiFi()) {
-        transmitData(raw, 1);
-    }
-}
-
 void sysLog(const __FlashStringHelper* msg)
 {
     // if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {
@@ -632,24 +648,6 @@ void testMemSetup () {
     Serial.println(freeRam());
 }
 
-void captureBlink() {
-    for (int i = 0; i < 1; i++) {
-        digitalWrite(LED, LOW);   // turn the LED on (HIGH is the voltage level)
-        delay(5);              // wait for a second
-        digitalWrite(LED, HIGH);    // turn the LED off by making the voltage LOW
-        delay(100);             
-    }
-}
-
-void uploadBlink() {
-    for (int i = 0; i < 3; i++) {
-        digitalWrite(LED, LOW);   // turn the LED on (HIGH is the voltage level)
-        delay(5);              // wait for a second
-        digitalWrite(LED, HIGH);    // turn the LED off by making the voltage LOW
-        delay(100);             
-    }
-}
-
 void blink5()
 {
     for (int i = 0; i < 3; i++) {
@@ -662,14 +660,9 @@ void blink5()
 
 void debugPrintTime()
 {
-    // display current time
     DS3231_get(&t);
     char buff[BUFF_MAX];
     snprintf(buff, BUFF_MAX, "%02d:%02d:%02d,cap:%d,up:%d,",t.hour, t.min, t.sec, captureCount, uploadCount);
     Serial.println(buff);
-    // String str;
-    // str += String(t.year) + "-" + String(t.mon) + "-" + String(t.mday) + "," + 
-    //     String(t.hour) + ":" + String(t.min) + ":" + String(t.sec) + ",cap:" + String(captureCount) + ",up:" + String(uploadCount);
-    // Serial.println(str);
 }
 
