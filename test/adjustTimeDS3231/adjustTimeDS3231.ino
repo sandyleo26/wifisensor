@@ -24,7 +24,7 @@ void setup()
     digitalWrite(LDO, HIGH);
     Wire.begin();
     DS3231_init(DS3231_INTCN);
-    //adjustTime(__DATE__, __TIME__);
+    adjustTime(__DATE__, __TIME__);
 
 }
 

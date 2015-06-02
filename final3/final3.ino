@@ -11,13 +11,16 @@
 #include "HTU21D.h"
 
 // RTC    ******************************
-#define VER "VER: final3.ino"
+#define VER "final3.ino-020615"
 #define SECONDS_DAY 86400
-#define BUFF_MAX 96
+#define CAPTURE_UPLOAD_INT_LEN_MAX 8
+#define WIFI_NAME_PASS_LEN_MAX 16
+#define WIFI_IPCMD_LEN_MAX 64
+#define WIFI_API_LEN_MAX 64
+#define WIFI_BUF_MAX 64
 #define MAX_LINES_PER_FILE 200
 #define MAX_LINES_PER_UPLOAD 5
 #define LINE_BUF_SIZE 40*MAX_LINES_PER_UPLOAD
-#define WIFI_BUF_MAX 64
 
 
 ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW) 
@@ -73,21 +76,20 @@ void setup()
     initialize();
     //readUserSetting();
     readUserSettingEEPROM();
-    //echoEEPROM();
     //testMemSetup();
     chip.sleepInterruptSetup();    // setup sleep function on the ATmega328p. Power-down mode is used here
     nextCaptureTime = t.unixtime;
     nextUploadTime = t.unixtime + uploadInt;
 
     //roundTime2Quarter();
-    char buffer[32];
-    getWiFiName(buffer);
+    char buffer[WIFI_BUF_MAX];
+    getWiFiName(buffer, WIFI_NAME_PASS_LEN_MAX);
     Serial.println(buffer);
-    getWifiPass(buffer);
+    getWifiPass(buffer, WIFI_NAME_PASS_LEN_MAX);
     Serial.println(buffer);
-    getIP(buffer);
+    getIP(buffer, WIFI_IPCMD_LEN_MAX);
     Serial.println(buffer);
-    getAPI(buffer);
+    getAPI(buffer, WIFI_API_LEN_MAX);
     Serial.println(buffer);
     Serial.println(getCaptureInt());
     Serial.println(getUploadInt());
@@ -98,7 +100,6 @@ void readUserSettingEEPROM()
 {
     int i = 0;
     int addr = 0;
-    // if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) sd.initErrorHalt();
     if (myFile.open(configFile, O_EXCL | O_CREAT)) {
         myFile.close();
         sd.errorHalt("O_EXCL");
@@ -127,12 +128,12 @@ void initialize()
     delay(5);
     Serial.println(F(VER));
     pinMode(LDO, OUTPUT);
-    //pinMode(LED, OUTPUT);
+    pinMode(LED, OUTPUT);
     pinMode(NPN_Q1, OUTPUT); // Turn on DHT & SD
     pinMode(WIFI_CP_PD, OUTPUT); // Turn on WiFi 
     pinMode(SDcsPin, OUTPUT); 
     digitalWrite(LDO, HIGH);
-    //digitalWrite(LED, HIGH);
+    digitalWrite(LED, HIGH);
     digitalWrite(NPN_Q1, HIGH);
     digitalWrite(WIFI_CP_PD, HIGH);
 
@@ -142,14 +143,14 @@ void initialize()
     DS3231_clear_a1f();
     DS3231_get(&t);
 
-    // 2. check SD
-    // initialize SD card on the SPI bus
-    //todo: get the line number to ignore
+    // 2. check SD, initialize SD card on the SPI bus
     int i = 0;
     while (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {
-        delay(1000);
         Serial.print(++i); Serial.println(F(" initialize fail."));
-        // sysLog(F("initialize."));
+        digitalWrite(LDO, LOW);
+        delay(3000);
+        digitalWrite(LDO, HIGH);
+        delay(5000);
         if (i > 10) sd.initErrorHalt();
     }
     createNewLogFile();
@@ -160,7 +161,6 @@ void initialize()
     htu.begin();
 
     // 4. check battery
-    // 5. check USB connection
 }
 
 void loop()
@@ -225,18 +225,10 @@ void roundTime2Quarter()
     minute = (dayclock % 3600) / 60;
     hour = dayclock / 3600;
     tempUnixTime = t.unixtime - dayclock + 3600*hour;
-
     nextCaptureTime = tempUnixTime + (minute/15+1)*900;
     //nextCaptureTime = t.unixtime;
     nextUploadTime = nextCaptureTime + uploadInt;
     //dayclock = (uint32_t)tempCaptureTime % SECONDS_DAY;
-
-    // second = dayclock % 60;
-    // minute = (dayclock % 3600) / 60;
-    // hour = dayclock / 3600;
-
-    // Serial.print(t.hour); Serial.print(":"); Serial.print(t.min); Serial.print(":"); Serial.println(t.sec);
-    // Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.println(second);
 }
 
 void goSleep()
@@ -283,8 +275,15 @@ bool isSleepMode()
 void createNewLogFile()
 {
     if (!createNewLogFile(false))
-        if (!createNewLogFile(true))
-            sd.errorHalt("NewLog");
+        if (!createNewLogFile(true)) {
+            //sd.errorHalt("NewLog");
+            digitalWrite(LDO, LOW);
+            chip.turnOffADC();
+            chip.turnOffSPI();
+            chip.turnOffWDT();
+            chip.turnOffBOD();
+            blinkError(3);
+        }
     uploadedLines = 0;
 }
 
@@ -398,10 +397,10 @@ boolean connectWiFi() {
     if (wifiConnected) return true;
 
     cwjap(true);
-    delay(15000);
+    delay(10000);
     while (1) {
         if (i++>20) return false;
-        delay(1000);
+        delay(2000);
         if ((n = Serial.available()) != 0) {
             j = 0;
             k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
@@ -412,10 +411,6 @@ boolean connectWiFi() {
                 break;
             } else if (strstr(buffer, "FAIL")) {
                 cwjap(true);
-            } else if (strstr(buffer, "ready")) {
-                cwjap(false);
-                delay(3000);
-                cwjap(true);
             }
         }
     }
@@ -424,11 +419,11 @@ boolean connectWiFi() {
 }
 
 void cwjap(boolean real) {
-    char buffer[16];
+    char buffer[WIFI_NAME_PASS_LEN_MAX];
     Serial.print(F("AT+CWJAP=\""));
-    if (real) getWiFiName(buffer);
+    if (real) getWiFiName(buffer, WIFI_NAME_PASS_LEN_MAX);
     Serial.print(buffer); Serial.print(F("\",\""));
-    if (real) getWifiPass(buffer);
+    if (real) getWifiPass(buffer, WIFI_NAME_PASS_LEN_MAX);
     Serial.print(buffer); Serial.println(F("\""));
 }
 
@@ -440,11 +435,11 @@ void cwjapxxx() {
 
 boolean transmitData(char* data, uint16_t lines) {  
 
-    char cmd[40];
+    char cmd[WIFI_API_LEN_MAX];
     int length;
     uint8_t i = 0;
 
-    getAPI(cmd);
+    getAPI(cmd, WIFI_API_LEN_MAX);
     length = strlen(cmd) + strlen(data) + 2;
 
     if (!initDataSend(length)) return false;
@@ -462,12 +457,6 @@ boolean transmitData(char* data, uint16_t lines) {
     Serial.print(cmd); Serial.print(data); Serial.print(F("\r\n"));
     //Serial.println(F("AT+CIPCLOSE"));
     uploadedLines += lines;
-    i = 0;
-    while (!Serial.find("SEND OK")) {
-        if (i++>20) break;
-        delay(200);
-    }
-    //uploadBlink();
     return true;
 }
 
@@ -485,9 +474,9 @@ boolean initWifiSerial()
 }
 
 void cipstart() {
-    char buffer[WIFI_BUF_MAX];
+    char buffer[WIFI_IPCMD_LEN_MAX];
     Serial.print(F(IPcmd));
-    getIP(buffer);
+    getIP(buffer, WIFI_IPCMD_LEN_MAX);
     Serial.print(buffer);
     Serial.println(F(getPort));
 }
@@ -539,32 +528,20 @@ String getAllEEPROM()
     return str;
 }
 
-String getWiFiName()
-{
-    char val;
-    int i = 0;
-    String str;
-    val = EEPROM.read(i++);
-    while (val != ',') {
-        str += val;
-        val = EEPROM.read(i++);
-    }
-    return str;
-}
-
-void getWiFiName(char* buf)
+void getWiFiName(char* buf, uint8_t len)
 {
     char val;
     int i = 0;
     val = EEPROM.read(i++);
     while (val != ',') {
+        if (i-1>=len-1) break;
         buf[i-1] = val;
         val = EEPROM.read(i++);
     }
     buf[i-1] = '\0';
 }
 
-void getConfigByPos(char *buf, uint8_t pos)
+void getConfigByPos(char *buf, uint8_t pos, uint8_t len)
 {
     char val;
     boolean flag = false;
@@ -575,94 +552,37 @@ void getConfigByPos(char *buf, uint8_t pos)
         if (count == pos-1 && flag == false) {flag = true; continue;} 
         if (count == pos) {break;}
         if (flag) buf[j++] = val;
+        if (j>=len-1) break;
     }
     buf[j] = '\0';
 }
 
-void getWifiPass(char* buf)
+void getWifiPass(char* buf, uint8_t len)
 {
-    getConfigByPos(buf, 2);
+    getConfigByPos(buf, 2, len);
 }
 
-void getIP(char* buf)
+void getIP(char* buf, uint8_t len)
 {
-    getConfigByPos(buf, 3);
+    getConfigByPos(buf, 3, len);
 }
 
-void getAPI(char* buf)
+void getAPI(char* buf, uint8_t len)
 {
-    getConfigByPos(buf, 4);
+    getConfigByPos(buf, 4, len);
 }
 
 uint16_t getCaptureInt()
 {
-    char buf[8];
-    getConfigByPos(buf, 5);
+    char buf[CAPTURE_UPLOAD_INT_LEN_MAX];
+    getConfigByPos(buf, 5, CAPTURE_UPLOAD_INT_LEN_MAX);
     return atoi(buf);
 }
 
 uint16_t getUploadInt()
 {
-    char buf[8];
-    getConfigByPos(buf, 6);
+    char buf[CAPTURE_UPLOAD_INT_LEN_MAX];
+    getConfigByPos(buf, 6, CAPTURE_UPLOAD_INT_LEN_MAX);
     return atoi(buf);
-}
-
-void sysLog(const __FlashStringHelper* msg)
-{
-    // if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {
-    //     Serial.println(F("initErrorHalt"));
-    //     return;
-    // }
-    if (!myFile.open(sdSysLog, O_RDWR | O_CREAT | O_AT_END)) {
-        myFile.print(t.year); myFile.print(t.mon); myFile.print(t.mday);myFile.print(F(" "));
-        myFile.print(t.hour); myFile.print(F(":")); myFile.print(t.min); myFile.print(F(":")); myFile.print(t.sec);
-        myFile.print(F("  info:")); myFile.println(msg);
-    }
-    myFile.close();
-}
-
-void sysLog(const char* msg)
-{
-    // if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {
-    //     Serial.println(F("initErrorHalt"));
-    //     return;
-    // }
-    if (!myFile.open(sdSysLog, O_RDWR | O_CREAT | O_AT_END)) {
-        myFile.print(t.year); myFile.print(t.mon); myFile.print(t.mday);myFile.print(F(" "));
-        myFile.print(t.hour); myFile.print(F(":")); myFile.print(t.min); myFile.print(F(":")); myFile.print(t.sec);
-        myFile.print(F("  info:")); myFile.println(msg);
-    }
-    myFile.close();
-}
-
-int freeRam () {
-  extern int __heap_start, *__brkval; 
-  int v; 
-  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
-}
-
-void testMemSetup () {
-    //Serial.begin(57600);
-    Serial.println(F("\n[memCheck]"));
-    Serial.println(freeRam());
-}
-
-void blink5()
-{
-    for (int i = 0; i < 3; i++) {
-        digitalWrite(LED, LOW);   // turn the LED on (HIGH is the voltage level)
-        delay(10);              // wait for a second
-        digitalWrite(LED, HIGH);    // turn the LED off by making the voltage LOW
-        delay(400);             
-    }
-}
-
-void debugPrintTime()
-{
-    DS3231_get(&t);
-    char buff[BUFF_MAX];
-    snprintf(buff, BUFF_MAX, "%02d:%02d:%02d,cap:%d,up:%d,",t.hour, t.min, t.sec, captureCount, uploadCount);
-    Serial.println(buff);
 }
 
