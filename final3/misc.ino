@@ -8,6 +8,13 @@ void debugPrintTime()
     Serial.println(buff);
 }
 
+void debugPrint(char *buf)
+{
+    #ifndef PRODUCTION
+        Serial.println(buf);
+    #endif
+}
+
 int freeRam () {
   extern int __heap_start, *__brkval; 
   int v; 
