@@ -69,3 +69,12 @@ void sysLog(const char* msg)
     }
     myFile.close();
 }
+
+void dateTime(uint16_t* date, uint16_t* time) {
+    // User gets date and time from GPS or real-time
+    // clock in real callback function
+    // return date using FAT_DATE macro to format fields
+    *date = FAT_DATE(t.year, t.mon, t.mday);
+    // return time using FAT_TIME macro to format fields
+    *time = FAT_TIME(t.hour, t.min, t.sec);
+}

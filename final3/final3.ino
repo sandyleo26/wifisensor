@@ -83,7 +83,12 @@ boolean wifiConnected = false;
 #ifdef PRODUCTION
 #define DEBUG_PRINT(str) ;
 #else
-#define DEBUG_PRINT(str) (Serial.println(str))
+#define DEBUG_PRINT(str) (Serial.print(str))
+#endif
+#ifdef PRODUCTION
+#define DEBUG_PRINTLN(str) ;
+#else
+#define DEBUG_PRINTLN(str) (Serial.println(str))
 #endif
 
 // setup ****************************************************************
@@ -100,15 +105,15 @@ void setup()
     roundTime2Quarter();
     char buffer[WIFI_BUF_MAX];
     getWiFiName(buffer, WIFI_NAME_PASS_LEN_MAX);
-    DEBUG_PRINT(buffer);
+    DEBUG_PRINTLN(buffer);
     getWifiPass(buffer, WIFI_NAME_PASS_LEN_MAX);
-    DEBUG_PRINT(buffer);
+    DEBUG_PRINTLN(buffer);
     getIP(buffer, WIFI_IPCMD_LEN_MAX);
-    DEBUG_PRINT(buffer);
+    DEBUG_PRINTLN(buffer);
     getAPI(buffer, WIFI_API_LEN_MAX);
-    DEBUG_PRINT(buffer);
-    DEBUG_PRINT(getCaptureInt());
-    DEBUG_PRINT(getUploadInt());
+    DEBUG_PRINTLN(buffer);
+    DEBUG_PRINTLN(getCaptureInt());
+    DEBUG_PRINTLN(getUploadInt());
     delay(5);
 }
 
@@ -142,7 +147,7 @@ void initialize()
 {
     Serial.begin(57600);
     delay(5);
-    DEBUG_PRINT(F(VER));
+    DEBUG_PRINTLN(F(VER));
     pinMode(LDO, OUTPUT);
     pinMode(LED, OUTPUT);
     pinMode(NPN_Q1, OUTPUT); // Turn on DHT & SD
@@ -163,13 +168,14 @@ void initialize()
     int i = 0;
     delay(1000);
     while (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {
-        DEBUG_PRINT(++i); DEBUG_PRINT(F(" initialize fail."));
+        DEBUG_PRINT(++i); DEBUG_PRINTLN(F(" initialize fail."));
         digitalWrite(LDO, LOW);
         delay(3000);
         digitalWrite(LDO, HIGH);
         delay(5000);
         if (i > 10) sd.initErrorHalt();
     }
+    SdFile::dateTimeCallback(dateTime);
     createNewLogFile();
     // 2. check wifi connection
 
@@ -183,7 +189,7 @@ void loop()
 {
     DS3231_get(&t);
     if (isCaptureMode()) {
-        DEBUG_PRINT(F("Capture"));
+        DEBUG_PRINTLN(F("Capture"));
         digitalWrite(LDO, HIGH);
         digitalWrite(WIFI_CP_PD, LOW);
         digitalWrite(NPN_Q1, HIGH);
@@ -193,7 +199,7 @@ void loop()
         DS3231_get(&t);
         while (nextCaptureTime <= t.unixtime + 1) nextCaptureTime += captureInt;
     } else if (isUploadMode()) {
-        DEBUG_PRINT(F("Upload"));
+        DEBUG_PRINTLN(F("Upload"));
         digitalWrite(LDO, HIGH);
         digitalWrite(WIFI_CP_PD, HIGH);
         digitalWrite(NPN_Q1, HIGH);
@@ -203,7 +209,7 @@ void loop()
         DS3231_get(&t);
         while (nextUploadTime <= t.unixtime + 1) nextUploadTime += uploadInt;
     } else if (isSleepMode()) {
-        DEBUG_PRINT(F("Sleep"));
+        DEBUG_PRINTLN(F("Sleep"));
         setAlarm1();
         goSleep();
     }
@@ -251,6 +257,12 @@ void roundTime2Quarter()
 
 void goSleep()
 {
+#ifndef PRODUCTION
+    Serial.println(t.unixtime);
+    Serial.println(alarm);
+    Serial.println(nextCaptureTime);
+    Serial.println(nextUploadTime);
+#endif
     digitalWrite(NPN_Q1, LOW);
     digitalWrite(WIFI_CP_PD, LOW);
     delay(5);  // give some delay
@@ -318,13 +330,15 @@ boolean createNewLogFile(boolean overwrite)
         ifstream f(sdLogFile);
         if (f.good()) {
             f.close();
+            Serial.print(sdLogFile); Serial.println(F(" exists."));
             if (!overwrite) continue;
         }
         if (!myFile.open(sdLogFile, O_WRITE | O_CREAT | O_TRUNC)) {
-            DEBUG_PRINT(F("Failed to open")); DEBUG_PRINT(sdLogFile);
+            DEBUG_PRINT(F("Failed to open ")); DEBUG_PRINTLN(sdLogFile);
             myFile.close();
         } else {
-            DEBUG_PRINT(F("sd works!"));
+            DEBUG_PRINT(F("New "));
+            DEBUG_PRINTLN(sdLogFile);
             myFile.close();
             return true;
         }
@@ -379,7 +393,6 @@ void uploadData()
 
     if (connectWiFi()) {
         delay(2000);
-        // initialize the SD card at SPI_HALF_SPEED to avoid bus errors with breadboards. use SPI_FULL_SPEED for better performance.
         if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) sd.initErrorHalt();
         ifstream sdin(sdLogFile);         
 
@@ -408,7 +421,8 @@ void uploadData()
                 if (!transmitData(buffer, multilines))
                     return;
             }
-            createNewLogFile();
+          //delay(2000);
+          //createNewLogFile();
         }
     }
 }
@@ -483,6 +497,7 @@ boolean transmitData(char* data, uint16_t lines) {
     wifiConnected = true;
     //Serial.println(F("AT+CIPCLOSE"));
     uploadedLines += lines;
+    // This delay is necessary sometimes for uploading to complete
     delay(500);
     return true;
 }
