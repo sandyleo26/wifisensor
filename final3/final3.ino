@@ -3,14 +3,17 @@
 // Smart TH WiFi Sensor code
 
 //****************************************************************
+// conditional compile
 #define CONFIG_UNIXTIME
+#define PCB0528
+#undef PRODUCTION
+
 #include <ds3231.h>
 #include <PowerSaver.h>
 #include <SdFat.h>
 #include <Wire.h>
 #include <EEPROM.h>
 #include "HTU21D.h"
-
 
 // RTC    ******************************
 #define VER "final3.ino-170615"
@@ -23,6 +26,11 @@
 #define MAX_LINES_PER_FILE 200
 #define MAX_LINES_PER_UPLOAD 4
 #define LINE_BUF_SIZE 30*MAX_LINES_PER_UPLOAD
+#define RTC_DIFF_FACTOR 8
+#define SD_WAIT_FOR_WIFI_DELAY 2000
+
+// ERROR_TYPE
+#define SD_ERROR 1
 
 const char string_0[] PROGMEM = "L%02d%02d%02d%c.csv";   // "String 0" etc are strings to store - change to suit.
 const char string_1[] PROGMEM = "";
@@ -65,6 +73,7 @@ uint32_t captureCount = 0, uploadCount = 0, uploadedLines = 0;
 uint32_t nextCaptureTime, nextUploadTime, alarm;
 struct ts t;
 boolean wifiConnected = false;
+boolean newLogFileNeeded = false;
 
 // LED
 #define LED 2
@@ -159,24 +168,15 @@ void initialize()
     digitalWrite(WIFI_CP_PD, LOW);
 
     // 1. RTC
-    Wire.begin();
-    DS3231_init(DS3231_INTCN);
-    DS3231_clear_a1f();
-    DS3231_get(&t);
+    initializeRTC();
 
     // 2. check SD, initialize SD card on the SPI bus
     int i = 0;
-    delay(1000);
-    while (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {
-        DEBUG_PRINT(++i); DEBUG_PRINTLN(F(" initialize fail."));
-        digitalWrite(LDO, LOW);
-        delay(3000);
-        digitalWrite(LDO, HIGH);
-        delay(5000);
-        if (i > 10) sd.initErrorHalt();
-    }
+    if (!initializeSD())
+        blinkError(SD_ERROR);
     SdFile::dateTimeCallback(dateTime);
     createNewLogFile();
+
     // 2. check wifi connection
 
     // HTU21D
@@ -187,26 +187,31 @@ void initialize()
 
 void loop()
 {
-    DS3231_get(&t);
+    //DS3231_get(&t);
+    updateRTC();
     if (isCaptureMode()) {
         DEBUG_PRINTLN(F("Capture"));
         digitalWrite(LDO, HIGH);
         digitalWrite(WIFI_CP_PD, LOW);
         digitalWrite(NPN_Q1, HIGH);
-        pinMode(SDcsPin, OUTPUT);
+        //pinMode(SDcsPin, OUTPUT);
         captureStoreData();
         captureCount++;
-        DS3231_get(&t);
+        //DS3231_get(&t);
         while (nextCaptureTime <= t.unixtime + 1) nextCaptureTime += captureInt;
     } else if (isUploadMode()) {
         DEBUG_PRINTLN(F("Upload"));
         digitalWrite(LDO, HIGH);
-        digitalWrite(WIFI_CP_PD, HIGH);
+        digitalWrite(WIFI_CP_PD, LOW);
+#ifdef PCB0528
         digitalWrite(NPN_Q1, HIGH);
+#else
+        digitalWrite(NPN_Q1, LOW);
+#endif
         pinMode(SDcsPin, OUTPUT);
         uploadData();
         uploadCount++;
-        DS3231_get(&t);
+        //DS3231_get(&t);
         while (nextUploadTime <= t.unixtime + 1) nextUploadTime += uploadInt;
     } else if (isSleepMode()) {
         DEBUG_PRINTLN(F("Sleep"));
@@ -225,9 +230,11 @@ void setAlarm1()
     second = dayclock % 60;
     minute = (dayclock % 3600) / 60;
     hour = dayclock / 3600;
-    // Serial.println(F("setAlarm1"));
-    // Serial.print(t.hour); Serial.print(":"); Serial.print(t.min); Serial.print(":"); Serial.println(t.sec);
-    // Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.println(second);
+#ifndef PRODUCTION
+    Serial.println(F("setAlarm1"));
+    Serial.print(t.hour); Serial.print(":"); Serial.print(t.min); Serial.print(":"); Serial.println(t.sec);
+    Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.println(second);
+#endif
 
     uint8_t flags[5] = { 0, 0, 0, 1, 1};
 
@@ -240,7 +247,7 @@ void setAlarm1()
 
 void roundTime2Quarter()
 {
-    #ifdef PRODUCTION
+#ifdef PRODUCTION
     uint32_t dayclock, tempUnixTime;
     uint8_t second, minute, hour;
     dayclock = (uint32_t)t.unixtime % SECONDS_DAY;
@@ -252,7 +259,7 @@ void roundTime2Quarter()
     //nextCaptureTime = t.unixtime;
     nextUploadTime = nextCaptureTime + uploadInt;
     //dayclock = (uint32_t)tempCaptureTime % SECONDS_DAY;
-    #endif
+#endif
 }
 
 void goSleep()
@@ -262,9 +269,11 @@ void goSleep()
     Serial.println(alarm);
     Serial.println(nextCaptureTime);
     Serial.println(nextUploadTime);
+    delay(5);  // give some delay
 #endif
     digitalWrite(NPN_Q1, LOW);
     digitalWrite(WIFI_CP_PD, LOW);
+    //digitalWrite(LDO, LOW);
     delay(5);  // give some delay
     chip.turnOffADC();
     chip.turnOffSPI();
@@ -324,12 +333,18 @@ boolean createNewLogFile(boolean overwrite)
     uint8_t i = 0;
 
     strcpy_P(fmt, (char*)pgm_read_word(&(string_table[0])));
-    DS3231_get(&t);
+    //DS3231_get(&t);
     while(i++<26) {
         sprintf(sdLogFile, fmt, t.year-2000, t.mon, t.mday, c++);
+        /*
         ifstream f(sdLogFile);
         if (f.good()) {
             f.close();
+            Serial.print(sdLogFile); Serial.println(F(" exists."));
+            if (!overwrite) continue;
+        }
+        */
+        if (sd.exists(sdLogFile)) {
             Serial.print(sdLogFile); Serial.println(F(" exists."));
             if (!overwrite) continue;
         }
@@ -357,9 +372,14 @@ void captureStoreData()
     dtostrf(temp, 3, 1, ttmp);
     dtostrf(hum, 3, 1, htmp);
         
-    delay(5);
-    if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) sd.initErrorHalt();
+    delay(2000);
+    if (!initializeSD()) return;
 
+    delay(5);
+    if (newLogFileNeeded) {
+        createNewLogFile();
+        newLogFileNeeded = true;
+    }
     if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
         createNewLogFile();
         if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
@@ -389,14 +409,25 @@ void uploadData()
 {
     uint16_t lineNum = 0, offset = 0, multilines = 0;
     char buffer[LINE_BUF_SIZE];
+
+    if (!initializeSD()) return;
+
+    digitalWrite(WIFI_CP_PD, HIGH);
     if (!initWifiSerial()) return;
 
     if (connectWiFi()) {
-        delay(2000);
-        if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) sd.initErrorHalt();
-        ifstream sdin(sdLogFile);         
-
+        // Important: print nothing before TCP connecton. Otherwise, it might fail
+        //DEBUG_PRINTLN(F("WiFi Connected"));
+        if (!initWifiSerial()) return;
+        ifstream sdin(sdLogFile);
+        if (sdin.good()) {
+            DEBUG_PRINTLN(F("I'm good"));
+        } else {
+            DEBUG_PRINTLN(F("I'm bad"));
+        }
+        if (!initWifiSerial()) return;
         while (sdin.getline(buffer+offset, LINE_BUF_SIZE-offset-1, '\n') || sdin.gcount()) {
+            //DEBUG_PRINTLN(F("Reading SD..."));
             if (++lineNum<=uploadedLines) continue;
             if (sdin.fail()) {
               //Serial.println(F("Partial long line"));
@@ -408,21 +439,29 @@ void uploadData()
             multilines++;
             offset = strlen(buffer);
 
+            /*
+            DEBUG_PRINTLN(lineNum);
+            DEBUG_PRINTLN(offset);
+            DEBUG_PRINTLN(multilines);
+            DEBUG_PRINTLN(buffer);
+            */
+
             // buffer: "133,2015-02-27,01:44:33,25.6,66.6$";
             if (multilines == MAX_LINES_PER_UPLOAD) {
                 if (!transmitData(buffer, multilines))
                     return;
                 multilines = 0;
                 offset = 0;
-            } 
+            }
         }
         if (multilines!=MAX_LINES_PER_UPLOAD && uploadedLines+multilines>=MAX_LINES_PER_FILE) {
             if (multilines>0) {
                 if (!transmitData(buffer, multilines))
                     return;
             }
-          //delay(2000);
-          //createNewLogFile();
+            //delay(SD_WAIT_FOR_WIFI_DELAY);
+            //createNewLogFile();
+            newLogFileNeeded = true;
         }
     }
 }
@@ -440,7 +479,9 @@ boolean connectWiFi() {
     cwjap(true);
     delay(10000);
     while (i++<10) {
-        delay(4000);
+        delay(1000);
+        if (Serial.find("OK")) return true;
+        /*
         if ((n = Serial.available()) != 0) {
             j = 0;
             k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
@@ -453,8 +494,9 @@ boolean connectWiFi() {
                 cwjap(true);
             }
         }
+        */
     }
-    return true;
+    return false;
 }
 
 void cwjap(boolean real) {
@@ -464,6 +506,7 @@ void cwjap(boolean real) {
     Serial.print(buffer); Serial.print(F("\",\""));
     if (real) getWifiPass(buffer, WIFI_NAME_PASS_LEN_MAX);
     Serial.print(buffer); Serial.println(F("\""));
+    delay(500);
 }
 
 void cwjapxxx() {
@@ -478,6 +521,7 @@ boolean transmitData(char* data, uint16_t lines) {
     int length;
     uint8_t i = 0;
 
+    //DEBUG_PRINTLN(F("transmitData"));
     getAPI(cmd, WIFI_API_LEN_MAX);
     length = strlen(cmd) + strlen(data) + 2;
 
@@ -530,11 +574,16 @@ boolean initDataSend(int length)
     uint8_t j = 0;
     uint8_t k = 0;
     char buffer[WIFI_BUF_MAX];
-    Serial.find("ERROR");
+    //Serial.find("ERROR");
     cipstart();
     delay(2000);
     while (1) {
-        if (i++>20) return false;
+        // Don't use find, because it's likely ERROR is returned. So detect it.
+        /*
+        if (Serial.find("CONNECT"))
+            break;
+            */
+        if (i++>10) return false;
         delay(1000);
         if ((n = Serial.available()) != 0) {
             j = 0;
@@ -628,3 +677,44 @@ uint16_t getUploadInt()
     return atoi(buf);
 }
 
+void updateRTC()
+{
+    uint32_t t0 = t.unixtime;
+    int i = 0;
+    while (i++<20) {
+        DS3231_get(&t);
+        int32_t diff = int32_t(t.unixtime - t0);
+        if (diff >= 0 && diff <= RTC_DIFF_FACTOR*uploadInt) {
+            return;
+        } else {
+            delay(400);
+        }
+    }
+    // if RTC still get invalid time, re-initialize and use this time.
+    initializeRTC();
+    nextCaptureTime = t.unixtime;
+    nextUploadTime = t.unixtime + uploadInt;
+}
+
+void initializeRTC()
+{
+    Wire.begin();
+    DS3231_init(DS3231_INTCN);
+    delay(1000);
+    DS3231_clear_a1f();
+    DS3231_get(&t);
+}
+
+boolean initializeSD()
+{
+    int i = 0;
+    while (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {
+        DEBUG_PRINT(++i); DEBUG_PRINTLN(F(" initialize fail."));
+        digitalWrite(LDO, LOW);
+        delay(2000);
+        digitalWrite(LDO, HIGH);
+        delay(3000);
+        if (i > 3) return false;
+    }
+    return true;
+}
