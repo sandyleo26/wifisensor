@@ -28,17 +28,14 @@ void testMemSetup () {
 }
 
 void blinkError(uint8_t ERROR_TYPE) {
-    digitalWrite(LDO, LOW);
-    digitalWrite(WIFI_CP_PD, LOW);
-    digitalWrite(NPN_Q1, LOW);
     while(1) {
         for(int x = 0 ; x < ERROR_TYPE ; x++) {
-            digitalWrite(LED, HIGH);
-            delay(100);
             digitalWrite(LED, LOW);
             delay(100);
+            digitalWrite(LED, HIGH);
+            delay(100);
         }
-        delay(2000);
+        delay(3000);
     }
 }
 

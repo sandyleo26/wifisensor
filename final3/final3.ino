@@ -30,7 +30,9 @@
 #define SD_WAIT_FOR_WIFI_DELAY 2000
 
 // ERROR_TYPE
-#define SD_ERROR 1
+#define SD_INIT_ERROR 1
+#define SD_CREATE_NEW_ERROR 2
+#define SD_CONFIG_ERROR 3
 
 const char string_0[] PROGMEM = "L%02d%02d%02d%c.csv";   // "String 0" etc are strings to store - change to suit.
 const char string_1[] PROGMEM = "";
@@ -136,7 +138,8 @@ void readUserSettingEEPROM()
     // }
     if (!myFile.open(configFile, O_READ)) {
         if (!myFile.open(configFileBak, O_READ)) {
-            sd.errorHalt(configFileBak);
+            deviceFailureShutdown();
+            blinkError(SD_CONFIG_ERROR);
         }
     }
 
@@ -172,10 +175,15 @@ void initialize()
 
     // 2. check SD, initialize SD card on the SPI bus
     int i = 0;
-    if (!initializeSD())
-        blinkError(SD_ERROR);
+    if (!initializeSD()) {
+        deviceFailureShutdown();
+        blinkError(SD_INIT_ERROR);
+    }
     SdFile::dateTimeCallback(dateTime);
-    createNewLogFile();
+    if (!createNewLogFile()) {
+        deviceFailureShutdown();
+        blinkError(SD_CREATE_NEW_ERROR);
+    }
 
     // 2. check wifi connection
 
@@ -267,12 +275,11 @@ void goSleep()
 #ifndef PRODUCTION
     Serial.println(t.unixtime);
     Serial.println(alarm);
-    Serial.println(nextCaptureTime);
-    Serial.println(nextUploadTime);
     delay(5);  // give some delay
 #endif
     digitalWrite(NPN_Q1, LOW);
     digitalWrite(WIFI_CP_PD, LOW);
+    // TODO: find out why LDO cannot be turned off here
     //digitalWrite(LDO, LOW);
     delay(5);  // give some delay
     chip.turnOffADC();
@@ -311,19 +318,14 @@ bool isSleepMode()
     return alarm>1;
 }
 
-void createNewLogFile()
+boolean createNewLogFile()
 {
     if (!createNewLogFile(false))
         if (!createNewLogFile(true)) {
-            //sd.errorHalt("NewLog");
-            digitalWrite(LDO, LOW);
-            chip.turnOffADC();
-            chip.turnOffSPI();
-            chip.turnOffWDT();
-            chip.turnOffBOD();
-            blinkError(3);
+            return false;
         }
     uploadedLines = 0;
+    return true;
 }
 
 boolean createNewLogFile(boolean overwrite)
@@ -372,27 +374,20 @@ void captureStoreData()
     dtostrf(temp, 3, 1, ttmp);
     dtostrf(hum, 3, 1, htmp);
         
+    // TODO: remove it when found reason why red SD card will fail 1 time after upload
     delay(2000);
     if (!initializeSD()) return;
 
     delay(5);
     if (newLogFileNeeded) {
-        createNewLogFile();
-        newLogFileNeeded = true;
+        if (createNewLogFile())
+            newLogFileNeeded = false;
     }
     if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
-        createNewLogFile();
-        if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
-            sd.errorHalt("sd!");
-        }
+        myFile.close();
+        return;
     }
 
-/*
-    myFile.print(captureCount);myFile.print(F(","));
-    myFile.print(t.year); myFile.print(F("-"));myFile.print(t.mon);myFile.print(F("-"));myFile.print(t.mday);myFile.print(F(","));
-    myFile.print(t.hour); myFile.print(F(":")); myFile.print(t.min); myFile.print(F(":")); myFile.print(t.sec); myFile.print(F(","));
-    myFile.print(ttmp); myFile.print(F(",")); myFile.print(htmp); myFile.println(F("$"));
-    */
     myFile.print(t.year-2000);
     if (t.mon<10) myFile.print(0); myFile.print(t.mon);
     if (t.mday<10) myFile.print(0); myFile.print(t.mday);
@@ -401,7 +396,6 @@ void captureStoreData()
     if (t.sec<10) myFile.print(0); myFile.print(t.sec); myFile.print(F(",")); 
     myFile.print(ttmp); myFile.print(F(",")); myFile.print(htmp); myFile.println(F("$"));
     myFile.close();
-    //captureBlink();    
 }
 
 
@@ -410,6 +404,8 @@ void uploadData()
     uint16_t lineNum = 0, offset = 0, multilines = 0;
     char buffer[LINE_BUF_SIZE];
 
+    DEBUG_PRINTLN(uploadedLines);
+    DEBUG_PRINTLN(captureCount);
     if (!initializeSD()) return;
 
     digitalWrite(WIFI_CP_PD, HIGH);
@@ -446,7 +442,6 @@ void uploadData()
             DEBUG_PRINTLN(buffer);
             */
 
-            // buffer: "133,2015-02-27,01:44:33,25.6,66.6$";
             if (multilines == MAX_LINES_PER_UPLOAD) {
                 if (!transmitData(buffer, multilines))
                     return;
@@ -717,4 +712,15 @@ boolean initializeSD()
         if (i > 3) return false;
     }
     return true;
+}
+
+void deviceFailureShutdown()
+{
+    digitalWrite(WIFI_CP_PD, LOW);
+    digitalWrite(NPN_Q1, LOW);
+//    chip.turnOffADC();
+    chip.turnOffSPI();
+    chip.turnOffWDT();
+    chip.turnOffBOD();
+    delay(100);
 }
