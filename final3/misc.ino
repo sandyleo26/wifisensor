@@ -39,6 +39,28 @@ void blinkError(uint8_t ERROR_TYPE) {
     }
 }
 
+void blinkAndShutDown(uint8_t ERROR_TYPE)
+{
+    int i = 0;
+    while(i++<20) {
+        for(int x = 0 ; x < ERROR_TYPE ; x++) {
+            digitalWrite(LED, LOW);
+            delay(100);
+            digitalWrite(LED, HIGH);
+            delay(100);
+        }
+        delay(3000);
+    }
+    digitalWrite(NPN_Q1, LOW);
+    digitalWrite(WIFI_CP_PD, LOW);
+    digitalWrite(LDO, LOW);
+    chip.turnOffADC();
+    chip.turnOffSPI();
+    chip.turnOffWDT();
+    chip.turnOffBOD();
+    chip.goodNight();
+}
+
 void sysLog(const __FlashStringHelper* msg)
 {
     // if (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {

@@ -127,7 +127,7 @@ void setup()
     delay(5);
 #endif
 
-    if (acknowledgeTest()) {
+    if (!acknowledgeTest()) {
         deviceFailureShutdown();
         blinkError(ACK_FAIL_ERROR);
     }
