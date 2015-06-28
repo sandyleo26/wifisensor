@@ -75,3 +75,17 @@ void dateTime(uint16_t* date, uint16_t* time) {
     // return time using FAT_TIME macro to format fields
     *time = FAT_TIME(t.hour, t.min, t.sec);
 }
+
+String getAllEEPROM()
+{ 
+    char val;
+    int i = 0;
+    String str;
+    val = EEPROM.read(i++);
+    while (val != '$') {
+        str += val;
+        val = EEPROM.read(i++);
+    }
+    return str;
+}
+

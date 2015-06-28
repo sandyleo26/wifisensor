@@ -33,6 +33,7 @@
 #define SD_INIT_ERROR 1
 #define SD_CREATE_NEW_ERROR 2
 #define SD_CONFIG_ERROR 3
+#define ACK_FAIL_ERROR 4
 
 const char string_0[] PROGMEM = "L%02d%02d%02d%c.csv";   // "String 0" etc are strings to store - change to suit.
 const char string_1[] PROGMEM = "";
@@ -106,14 +107,12 @@ boolean newLogFileNeeded = false;
 void setup()
 {
     initialize();
-    //readUserSetting();
     readUserSettingEEPROM();
     //testMemSetup();
-    chip.sleepInterruptSetup();    // setup sleep function on the ATmega328p. Power-down mode is used here
-    nextCaptureTime = t.unixtime;
-    nextUploadTime = t.unixtime + uploadInt;
+    // setup sleep function on the ATmega328p. Power-down mode is used here
+    chip.sleepInterruptSetup();
 
-    roundTime2Quarter();
+#ifndef PRODUCTION
     char buffer[WIFI_BUF_MAX];
     getWiFiName(buffer, WIFI_NAME_PASS_LEN_MAX);
     DEBUG_PRINTLN(buffer);
@@ -126,6 +125,14 @@ void setup()
     DEBUG_PRINTLN(getCaptureInt());
     DEBUG_PRINTLN(getUploadInt());
     delay(5);
+#endif
+
+    if (acknowledgeTest()) {
+        deviceFailureShutdown();
+        blinkError(ACK_FAIL_ERROR);
+    }
+
+    calculateNextCaptureUploadTime();
 }
 
 void readUserSettingEEPROM()
@@ -204,7 +211,6 @@ void loop()
         digitalWrite(NPN_Q1, HIGH);
         //pinMode(SDcsPin, OUTPUT);
         captureStoreData();
-        captureCount++;
         //DS3231_get(&t);
         while (nextCaptureTime <= t.unixtime + 1) nextCaptureTime += captureInt;
     } else if (isUploadMode()) {
@@ -218,7 +224,6 @@ void loop()
 #endif
         pinMode(SDcsPin, OUTPUT);
         uploadData();
-        uploadCount++;
         //DS3231_get(&t);
         while (nextUploadTime <= t.unixtime + 1) nextUploadTime += uploadInt;
     } else if (isSleepMode()) {
@@ -253,8 +258,9 @@ void setAlarm1()
     DS3231_set_creg(DS3231_INTCN | DS3231_A1IE);
 }
 
-void roundTime2Quarter()
+void calculateNextCaptureUploadTime()
 {
+    updateRTC();
 #ifdef PRODUCTION
     uint32_t dayclock, tempUnixTime;
     uint8_t second, minute, hour;
@@ -268,6 +274,9 @@ void roundTime2Quarter()
     nextUploadTime = nextCaptureTime + uploadInt;
     //dayclock = (uint32_t)tempCaptureTime % SECONDS_DAY;
 #endif
+    // roundTime2Quarter for production; otherwise, straightly add interval
+    nextCaptureTime = t.unixtime;
+    nextUploadTime = t.unixtime + uploadInt;
 }
 
 void goSleep()
@@ -338,14 +347,6 @@ boolean createNewLogFile(boolean overwrite)
     //DS3231_get(&t);
     while(i++<26) {
         sprintf(sdLogFile, fmt, t.year-2000, t.mon, t.mday, c++);
-        /*
-        ifstream f(sdLogFile);
-        if (f.good()) {
-            f.close();
-            Serial.print(sdLogFile); Serial.println(F(" exists."));
-            if (!overwrite) continue;
-        }
-        */
         if (sd.exists(sdLogFile)) {
             Serial.print(sdLogFile); Serial.println(F(" exists."));
             if (!overwrite) continue;
@@ -363,9 +364,8 @@ boolean createNewLogFile(boolean overwrite)
     return false;
 }
 
-void captureStoreData()
+boolean captureStoreData()
 {
-    //char raw[64] = "9999999,2015-02-27,01:44:33,-38.5,66.6$";
     char ttmp[8]; 
     char htmp[8];
     float temp, hum;
@@ -376,7 +376,7 @@ void captureStoreData()
         
     // TODO: remove it when found reason why red SD card will fail 1 time after upload
     delay(2000);
-    if (!initializeSD()) return;
+    if (!initializeSD()) return false;
 
     delay(5);
     if (newLogFileNeeded) {
@@ -385,7 +385,7 @@ void captureStoreData()
     }
     if (!myFile.open(sdLogFile, O_RDWR | O_CREAT | O_AT_END)) {
         myFile.close();
-        return;
+        return false;
     }
 
     myFile.print(t.year-2000);
@@ -396,32 +396,36 @@ void captureStoreData()
     if (t.sec<10) myFile.print(0); myFile.print(t.sec); myFile.print(F(",")); 
     myFile.print(ttmp); myFile.print(F(",")); myFile.print(htmp); myFile.println(F("$"));
     myFile.close();
+    captureCount++;
+    return true;
 }
 
 
-void uploadData()
+boolean uploadData()
 {
     uint16_t lineNum = 0, offset = 0, multilines = 0;
     char buffer[LINE_BUF_SIZE];
 
     DEBUG_PRINTLN(uploadedLines);
     DEBUG_PRINTLN(captureCount);
-    if (!initializeSD()) return;
+    if (!initializeSD()) return false;
 
     digitalWrite(WIFI_CP_PD, HIGH);
-    if (!initWifiSerial()) return;
+    if (!initWifiSerial()) return false;
 
-    if (connectWiFi()) {
+    if (!connectWiFi()) {
+        return false;
+    } else {
         // Important: print nothing before TCP connecton. Otherwise, it might fail
         //DEBUG_PRINTLN(F("WiFi Connected"));
-        if (!initWifiSerial()) return;
+        if (!initWifiSerial()) return false;
         ifstream sdin(sdLogFile);
         if (sdin.good()) {
             DEBUG_PRINTLN(F("I'm good"));
         } else {
             DEBUG_PRINTLN(F("I'm bad"));
         }
-        if (!initWifiSerial()) return;
+        if (!initWifiSerial()) return false;
         while (sdin.getline(buffer+offset, LINE_BUF_SIZE-offset-1, '\n') || sdin.gcount()) {
             //DEBUG_PRINTLN(F("Reading SD..."));
             if (++lineNum<=uploadedLines) continue;
@@ -444,7 +448,7 @@ void uploadData()
 
             if (multilines == MAX_LINES_PER_UPLOAD) {
                 if (!transmitData(buffer, multilines))
-                    return;
+                    return false;
                 multilines = 0;
                 offset = 0;
             }
@@ -452,12 +456,14 @@ void uploadData()
         if (multilines!=MAX_LINES_PER_UPLOAD && uploadedLines+multilines>=MAX_LINES_PER_FILE) {
             if (multilines>0) {
                 if (!transmitData(buffer, multilines))
-                    return;
+                    return false;
             }
             //delay(SD_WAIT_FOR_WIFI_DELAY);
             //createNewLogFile();
             newLogFileNeeded = true;
         }
+        uploadCount++;
+        return true;
     }
 }
 
@@ -544,7 +550,6 @@ boolean transmitData(char* data, uint16_t lines) {
 boolean initWifiSerial()
 {
     uint8_t i = 0;
-    //Serial.println(F("AT+RST"));
     delay(5);
     while (!Serial.find("OK")) {
         if (i++>10) return false;
@@ -599,19 +604,6 @@ boolean initDataSend(int length)
     Serial.println(length);
     delay(5);
     return true;
-}
-
-String getAllEEPROM()
-{ 
-    char val;
-    int i = 0;
-    String str;
-    val = EEPROM.read(i++);
-    while (val != '$') {
-        str += val;
-        val = EEPROM.read(i++);
-    }
-    return str;
 }
 
 void getWiFiName(char* buf, uint8_t len)
@@ -716,11 +708,39 @@ boolean initializeSD()
 
 void deviceFailureShutdown()
 {
+    delay(100);
     digitalWrite(WIFI_CP_PD, LOW);
     digitalWrite(NPN_Q1, LOW);
 //    chip.turnOffADC();
     chip.turnOffSPI();
     chip.turnOffWDT();
     chip.turnOffBOD();
-    delay(100);
+}
+
+boolean acknowledgeTest()
+{
+    int i = 0, j = 0;
+    DEBUG_PRINTLN(F("ACK Test"));
+    while (1) {
+        i++;
+        if (captureStoreData()) j++;
+        if (j == MAX_LINES_PER_UPLOAD) break;
+        if (i >= 2*MAX_LINES_PER_UPLOAD) {
+            DEBUG_PRINTLN(F("Cap fail"));
+            return false;
+        }
+        updateRTC();
+        delay(2000);
+    }
+
+    i = 0;
+    while (!uploadData()) {
+        delay(5000);
+        if (i++>4) {
+            DEBUG_PRINTLN(F("Up fail"));
+            return false;
+        }
+    }
+    DEBUG_PRINTLN(F("ACK Pass"));
+    return true;
 }
