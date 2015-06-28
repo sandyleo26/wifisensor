@@ -289,7 +289,7 @@ void goSleep()
     digitalWrite(NPN_Q1, LOW);
     digitalWrite(WIFI_CP_PD, LOW);
     // TODO: find out why LDO cannot be turned off here
-    //digitalWrite(LDO, LOW);
+    digitalWrite(LDO, LOW);
     delay(5);  // give some delay
     chip.turnOffADC();
     chip.turnOffSPI();
@@ -299,6 +299,9 @@ void goSleep()
     // wake up here
     chip.turnOnADC();    // enable ADC after processor wakes up
     chip.turnOnSPI();   // turn on SPI bus once the processor wakes up
+    // Important: LDO has to been turned on before any RTC operation;
+    // otherwise it never wakes up
+    digitalWrite(LDO, HIGH);
     delay(500);    // important delay to ensure SPI bus is properly activated
     //if (DS3231_triggered_a1()) {
         //Serial.println(F("**Alarm has been triggered**"));
@@ -742,5 +745,6 @@ boolean acknowledgeTest()
         }
     }
     DEBUG_PRINTLN(F("ACK Pass"));
+    wifiConnected = true;
     return true;
 }
