@@ -178,6 +178,7 @@ void initialize()
     digitalWrite(WIFI_CP_PD, LOW);
 
     // 1. RTC
+    delay(5);
     initializeRTC();
 
     // 2. check SD, initialize SD card on the SPI bus
@@ -288,7 +289,6 @@ void goSleep()
 #endif
     digitalWrite(NPN_Q1, LOW);
     digitalWrite(WIFI_CP_PD, LOW);
-    // TODO: find out why LDO cannot be turned off here
     digitalWrite(LDO, LOW);
     delay(5);  // give some delay
     chip.turnOffADC();
@@ -334,6 +334,7 @@ boolean createNewLogFile()
 {
     if (!createNewLogFile(false))
         if (!createNewLogFile(true)) {
+            DEBUG_PRINTLN(F("Overwrite fails."));
             return false;
         }
     uploadedLines = 0;
@@ -344,12 +345,13 @@ boolean createNewLogFile(boolean overwrite)
 {
     char c = 'a';
     char fmt[24];
-    uint8_t i = 0;
+    uint8_t i = 0, yy;
 
     strcpy_P(fmt, (char*)pgm_read_word(&(string_table[0])));
     //DS3231_get(&t);
     while(i++<26) {
-        sprintf(sdLogFile, fmt, t.year-2000, t.mon, t.mday, c++);
+        yy = (t.year < 2000) ? 0 : t.year - 2000;
+        sprintf(sdLogFile, fmt, yy, t.mon, t.mday, c++);
         if (sd.exists(sdLogFile)) {
             Serial.print(sdLogFile); Serial.println(F(" exists."));
             if (!overwrite) continue;
@@ -372,6 +374,7 @@ boolean captureStoreData()
     char ttmp[8]; 
     char htmp[8];
     float temp, hum;
+    uint8_t yy;
     temp = htu.readTemperature();
     hum = htu.readHumidity();
     dtostrf(temp, 3, 1, ttmp);
@@ -391,7 +394,8 @@ boolean captureStoreData()
         return false;
     }
 
-    myFile.print(t.year-2000);
+    yy = (t.year < 2000) ? 0 : t.year - 2000;
+    myFile.print(yy);
     if (t.mon<10) myFile.print(0); myFile.print(t.mon);
     if (t.mday<10) myFile.print(0); myFile.print(t.mday);
     if (t.hour<10) myFile.print(0); myFile.print(t.hour);
@@ -408,6 +412,7 @@ boolean uploadData()
 {
     uint16_t lineNum = 0, offset = 0, multilines = 0;
     char buffer[LINE_BUF_SIZE];
+    uint32_t prevUploadedLines = uploadedLines;
 
     DEBUG_PRINTLN(uploadedLines);
     DEBUG_PRINTLN(captureCount);
@@ -466,7 +471,7 @@ boolean uploadData()
             newLogFileNeeded = true;
         }
         uploadCount++;
-        return true;
+        return uploadedLines > prevUploadedLines;
     }
 }
 
@@ -724,6 +729,7 @@ boolean acknowledgeTest()
 {
     int i = 0, j = 0;
     DEBUG_PRINTLN(F("ACK Test"));
+    digitalWrite(LED, LOW);
     while (1) {
         i++;
         if (captureStoreData()) j++;
@@ -746,5 +752,6 @@ boolean acknowledgeTest()
     }
     DEBUG_PRINTLN(F("ACK Pass"));
     wifiConnected = true;
+    digitalWrite(LED, HIGH);
     return true;
 }

@@ -42,7 +42,7 @@ void blinkError(uint8_t ERROR_TYPE) {
 void blinkAndShutDown(uint8_t ERROR_TYPE)
 {
     int i = 0;
-    while(i++<20) {
+    while(i++<10) {
         for(int x = 0 ; x < ERROR_TYPE ; x++) {
             digitalWrite(LED, LOW);
             delay(100);
@@ -58,6 +58,7 @@ void blinkAndShutDown(uint8_t ERROR_TYPE)
     chip.turnOffSPI();
     chip.turnOffWDT();
     chip.turnOffBOD();
+    delay(500);
     chip.goodNight();
 }
 
