@@ -16,7 +16,7 @@
 #include "HTU21D.h"
 
 // RTC    ******************************
-#define VER "final3.ino-170615"
+#define VER __DATE__
 #define SECONDS_DAY 86400
 #define CAPTURE_UPLOAD_INT_LEN_MAX 8
 #define WIFI_NAME_PASS_LEN_MAX 16
@@ -164,7 +164,8 @@ void readUserSettingEEPROM()
 
 void initialize()
 {
-    Serial.begin(57600);
+    // for chengong certificate sample
+    Serial.begin(9600);
     delay(5);
     DEBUG_PRINTLN(F(VER));
     pinMode(LDO, OUTPUT);
@@ -248,6 +249,7 @@ void setAlarm1()
     Serial.println(F("setAlarm1"));
     Serial.print(t.hour); Serial.print(":"); Serial.print(t.min); Serial.print(":"); Serial.println(t.sec);
     Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.println(second);
+    delay(100);
 #endif
 
     uint8_t flags[5] = { 0, 0, 0, 1, 1};
@@ -381,7 +383,7 @@ boolean captureStoreData()
     dtostrf(hum, 3, 1, htmp);
         
     // TODO: remove it when found reason why red SD card will fail 1 time after upload
-    delay(2000);
+    //delay(2000);
     if (!initializeSD()) return false;
 
     delay(5);
@@ -426,14 +428,12 @@ boolean uploadData()
     } else {
         // Important: print nothing before TCP connecton. Otherwise, it might fail
         //DEBUG_PRINTLN(F("WiFi Connected"));
-        if (!initWifiSerial()) return false;
         ifstream sdin(sdLogFile);
         if (sdin.good()) {
             DEBUG_PRINTLN(F("I'm good"));
         } else {
             DEBUG_PRINTLN(F("I'm bad"));
         }
-        if (!initWifiSerial()) return false;
         while (sdin.getline(buffer+offset, LINE_BUF_SIZE-offset-1, '\n') || sdin.gcount()) {
             //DEBUG_PRINTLN(F("Reading SD..."));
             if (++lineNum<=uploadedLines) continue;
@@ -447,16 +447,18 @@ boolean uploadData()
             multilines++;
             offset = strlen(buffer);
 
-            /*
+#ifndef PRODUCTION
             DEBUG_PRINTLN(lineNum);
             DEBUG_PRINTLN(offset);
             DEBUG_PRINTLN(multilines);
             DEBUG_PRINTLN(buffer);
-            */
+            delay(100);
+#endif
 
             if (multilines == MAX_LINES_PER_UPLOAD) {
                 if (!transmitData(buffer, multilines))
                     return false;
+                delay(1000);
                 multilines = 0;
                 offset = 0;
             }
@@ -534,6 +536,8 @@ boolean transmitData(char* data, uint16_t lines) {
     getAPI(cmd, WIFI_API_LEN_MAX);
     length = strlen(cmd) + strlen(data) + 2;
 
+    // AT is essential to make upload consecutively successfully
+    if (!initWifiSerial()) return false;
     if (!initDataSend(length)) return false;
 
     while (!Serial.find(">")) {
@@ -547,7 +551,7 @@ boolean transmitData(char* data, uint16_t lines) {
         // }
     }
     Serial.print(cmd); Serial.print(data); Serial.print(F("\r\n"));
-    wifiConnected = true;
+    //wifiConnected = true;
     //Serial.println(F("AT+CIPCLOSE"));
     uploadedLines += lines;
     // This delay is necessary sometimes for uploading to complete
@@ -582,9 +586,9 @@ boolean initDataSend(int length)
     uint8_t j = 0;
     uint8_t k = 0;
     char buffer[WIFI_BUF_MAX];
-    //Serial.find("ERROR");
+    Serial.find("ERROR");
     cipstart();
-    delay(2000);
+    delay(5000);
     while (1) {
         // Don't use find, because it's likely ERROR is returned. So detect it.
         /*
@@ -733,8 +737,8 @@ boolean acknowledgeTest()
     while (1) {
         i++;
         if (captureStoreData()) j++;
-        if (j == MAX_LINES_PER_UPLOAD) break;
-        if (i >= 2*MAX_LINES_PER_UPLOAD) {
+        if (j == 2*MAX_LINES_PER_UPLOAD) break;
+        if (i >= 3*MAX_LINES_PER_UPLOAD) {
             DEBUG_PRINTLN(F("Cap fail"));
             return false;
         }
@@ -744,12 +748,14 @@ boolean acknowledgeTest()
 
     i = 0;
     while (!uploadData()) {
-        delay(5000);
-        if (i++>4) {
+        delay(3000);
+        if (i++>2) {
             DEBUG_PRINTLN(F("Up fail"));
             return false;
         }
     }
+    if (uploadedLines != 2*MAX_LINES_PER_UPLOAD)
+        return false;
     DEBUG_PRINTLN(F("ACK Pass"));
     wifiConnected = true;
     digitalWrite(LED, HIGH);
