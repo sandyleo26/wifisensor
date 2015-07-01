@@ -26,7 +26,7 @@
 #define MAX_LINES_PER_FILE 200
 #define MAX_LINES_PER_UPLOAD 4
 #define LINE_BUF_SIZE 30*MAX_LINES_PER_UPLOAD
-#define RTC_DIFF_FACTOR 8
+#define RTC_DIFF_FACTOR 2
 #define SD_WAIT_FOR_WIFI_DELAY 2000
 
 // ERROR_TYPE
@@ -34,6 +34,9 @@
 #define SD_CREATE_NEW_ERROR 2
 #define SD_CONFIG_ERROR 3
 #define ACK_FAIL_ERROR 4
+#define SD_DEBUG_INIT_ERROR 5
+#define SD_DEBUG_OPEN_ERROR 6
+
 
 const char string_0[] PROGMEM = "L%02d%02d%02d%c.csv";   // "String 0" etc are strings to store - change to suit.
 const char string_1[] PROGMEM = "";
@@ -53,7 +56,6 @@ ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW)
 SdFat sd;
 SdFile myFile;
 char sdLogFile[15] = "";
-char sdSysLog[] = "sys.log";
 char configFile[] = "config.txt";
 char configFileBak[] = "cfg.bak";
 #define SDcsPin 9 // D9
@@ -94,14 +96,50 @@ boolean newLogFileNeeded = false;
 
 #ifdef PRODUCTION
 #define DEBUG_PRINT(str) ;
-#else
-#define DEBUG_PRINT(str) (Serial.print(str))
-#endif
-#ifdef PRODUCTION
 #define DEBUG_PRINTLN(str) ;
 #else
+#define DEBUG_PRINT(str) (Serial.print(str))
 #define DEBUG_PRINTLN(str) (Serial.println(str))
 #endif
+
+#ifdef PRODUCTION
+#define DEBUG_LOG_PRINT(str) ;
+#define DEBUG_LOG_PRINTLN(str) ;
+#else
+SdFile debugFile;
+char sdDebugLog[] = "sys.log";
+#define DEBUG_LOG_PRINT(str, needInit) {\
+            tryOpenDebugFile(needInit);\
+            debugFile.print(str);\
+            delay(100);\
+            debugFile.close();\
+            delay(100);\
+        }
+
+#define DEBUG_LOG_PRINTLN(str, needInit) {\
+            tryOpenDebugFile(needInit);\
+            debugFile.println(str);\
+            delay(100);\
+            debugFile.close();\
+            delay(100);\
+        }
+#endif
+
+boolean tryOpenDebugFile(boolean needInit)
+{
+    if (needInit) {
+        if (!initializeSD()) {
+            deviceFailureShutdown();
+            blinkError(SD_DEBUG_INIT_ERROR);
+        }
+    }
+    if (!debugFile.open(sdDebugLog, O_RDWR | O_CREAT | O_AT_END)) {
+        debugFile.close();
+        deviceFailureShutdown();
+        blinkError(SD_DEBUG_OPEN_ERROR);
+    }
+    return true;
+}
 
 // setup ****************************************************************
 void setup()
@@ -285,8 +323,10 @@ void calculateNextCaptureUploadTime()
 void goSleep()
 {
 #ifndef PRODUCTION
-    Serial.println(t.unixtime);
-    Serial.println(alarm);
+    DEBUG_PRINTLN(t.unixtime);
+    DEBUG_PRINTLN(alarm);
+    DEBUG_LOG_PRINTLN(t.unixtime, false);
+    DEBUG_LOG_PRINTLN(alarm, false);
     delay(5);  // give some delay
 #endif
     digitalWrite(NPN_Q1, LOW);
@@ -303,10 +343,12 @@ void goSleep()
     chip.turnOnSPI();   // turn on SPI bus once the processor wakes up
     // Important: LDO has to been turned on before any RTC operation;
     // otherwise it never wakes up
+    DEBUG_PRINTLN(F("LDO ON"));
     digitalWrite(LDO, HIGH);
-    delay(500);    // important delay to ensure SPI bus is properly activated
+    delay(2000);    // important delay to ensure SPI bus is properly activated
     //if (DS3231_triggered_a1()) {
         //Serial.println(F("**Alarm has been triggered**"));
+        DEBUG_PRINTLN(F("a1f"));
         DS3231_clear_a1f();
         delay(10);
     //}
@@ -337,6 +379,10 @@ boolean createNewLogFile()
     if (!createNewLogFile(false))
         if (!createNewLogFile(true)) {
             DEBUG_PRINTLN(F("Overwrite fails."));
+#ifndef PRODUCTION
+            int blinkCount = 0;
+            while (blinkCount++<3) blink(SD_CREATE_NEW_ERROR);
+#endif
             return false;
         }
     uploadedLines = 0;
@@ -386,6 +432,7 @@ boolean captureStoreData()
     //delay(2000);
     if (!initializeSD()) return false;
 
+    DEBUG_LOG_PRINTLN(F("Capture"), false);
     delay(5);
     if (newLogFileNeeded) {
         if (createNewLogFile())
@@ -419,6 +466,9 @@ boolean uploadData()
     DEBUG_PRINTLN(uploadedLines);
     DEBUG_PRINTLN(captureCount);
     if (!initializeSD()) return false;
+    DEBUG_LOG_PRINTLN(F("Upload"), false);
+    DEBUG_LOG_PRINTLN(uploadedLines, false);
+    DEBUG_LOG_PRINTLN(captureCount, false);
 
     digitalWrite(WIFI_CP_PD, HIGH);
     if (!initWifiSerial()) return false;
@@ -431,8 +481,10 @@ boolean uploadData()
         ifstream sdin(sdLogFile);
         if (sdin.good()) {
             DEBUG_PRINTLN(F("I'm good"));
+            //DEBUG_LOG_PRINTLN(F("I'm good"), false);
         } else {
             DEBUG_PRINTLN(F("I'm bad"));
+            //DEBUG_LOG_PRINTLN(F("I'm bad"), false);
         }
         while (sdin.getline(buffer+offset, LINE_BUF_SIZE-offset-1, '\n') || sdin.gcount()) {
             //DEBUG_PRINTLN(F("Reading SD..."));
@@ -555,6 +607,7 @@ boolean transmitData(char* data, uint16_t lines) {
     //Serial.println(F("AT+CIPCLOSE"));
     uploadedLines += lines;
     // This delay is necessary sometimes for uploading to complete
+    DEBUG_PRINTLN(F("transmit finished"));
     delay(500);
     return true;
 }
@@ -678,15 +731,18 @@ uint16_t getUploadInt()
 
 void updateRTC()
 {
-    uint32_t t0 = t.unixtime;
-    int i = 0;
-    while (i++<20) {
+    uint8_t i = 0;
+    uint32_t tt;
+    int32_t diff;
+    tt = t.unixtime;
+    while (i++<5) {
         DS3231_get(&t);
-        int32_t diff = int32_t(t.unixtime - t0);
-        if (diff >= 0 && diff <= RTC_DIFF_FACTOR*uploadInt) {
-            return;
+        diff = int32_t(t.unixtime - tt);
+        DEBUG_PRINTLN(F("DS3231_get"));
+        if ((diff < 0) || (diff > int32_t(uploadInt))) {
+            delay(1000);
         } else {
-            delay(400);
+            return;
         }
     }
     // if RTC still get invalid time, re-initialize and use this time.
@@ -698,6 +754,7 @@ void updateRTC()
 void initializeRTC()
 {
     Wire.begin();
+    DEBUG_PRINTLN(F("DS3231_init"));
     DS3231_init(DS3231_INTCN);
     delay(1000);
     DS3231_clear_a1f();
@@ -709,6 +766,10 @@ boolean initializeSD()
     int i = 0;
     while (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {
         DEBUG_PRINT(++i); DEBUG_PRINTLN(F(" initialize fail."));
+#ifndef PRODUCTION
+        int blinkCount = 0;
+        while (blinkCount++<3) blink(SD_INIT_ERROR);
+#endif
         digitalWrite(LDO, LOW);
         delay(2000);
         digitalWrite(LDO, HIGH);
@@ -733,6 +794,7 @@ boolean acknowledgeTest()
 {
     int i = 0, j = 0;
     DEBUG_PRINTLN(F("ACK Test"));
+    DEBUG_LOG_PRINTLN(F("ACK Test"), false);
     digitalWrite(LED, LOW);
     while (1) {
         i++;
@@ -757,6 +819,7 @@ boolean acknowledgeTest()
     if (uploadedLines != 2*MAX_LINES_PER_UPLOAD)
         return false;
     DEBUG_PRINTLN(F("ACK Pass"));
+    DEBUG_LOG_PRINTLN(F("ACK Pass"), false);
     wifiConnected = true;
     digitalWrite(LED, HIGH);
     return true;

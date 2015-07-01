@@ -29,13 +29,26 @@ void testMemSetup () {
 
 void blinkError(uint8_t ERROR_TYPE) {
     while(1) {
+        blink(ERROR_TYPE);
+        delay(3000);
+    }
+}
+
+void blink(uint8_t ERROR_TYPE) {
+    if (ERROR_TYPE <= 4) {
         for(int x = 0 ; x < ERROR_TYPE ; x++) {
             digitalWrite(LED, LOW);
             delay(100);
             digitalWrite(LED, HIGH);
             delay(100);
         }
-        delay(3000);
+    } else {
+        for(int x = 0 ; x < ERROR_TYPE ; x++) {
+            digitalWrite(LED, LOW);
+            delay(500);
+            digitalWrite(LED, HIGH);
+            delay(500);
+        }
     }
 }
 
@@ -68,7 +81,7 @@ void sysLog(const __FlashStringHelper* msg)
     //     Serial.println(F("initErrorHalt"));
     //     return;
     // }
-    if (!myFile.open(sdSysLog, O_RDWR | O_CREAT | O_AT_END)) {
+    if (!myFile.open(sdDebugLog, O_RDWR | O_CREAT | O_AT_END)) {
         myFile.print(t.year); myFile.print(t.mon); myFile.print(t.mday);myFile.print(F(" "));
         myFile.print(t.hour); myFile.print(F(":")); myFile.print(t.min); myFile.print(F(":")); myFile.print(t.sec);
         myFile.print(F("  info:")); myFile.println(msg);
@@ -82,7 +95,7 @@ void sysLog(const char* msg)
     //     Serial.println(F("initErrorHalt"));
     //     return;
     // }
-    if (!myFile.open(sdSysLog, O_RDWR | O_CREAT | O_AT_END)) {
+    if (!myFile.open(sdDebugLog, O_RDWR | O_CREAT | O_AT_END)) {
         myFile.print(t.year); myFile.print(t.mon); myFile.print(t.mday);myFile.print(F(" "));
         myFile.print(t.hour); myFile.print(F(":")); myFile.print(t.min); myFile.print(F(":")); myFile.print(t.sec);
         myFile.print(F("  info:")); myFile.println(msg);
