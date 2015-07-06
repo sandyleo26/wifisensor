@@ -21,7 +21,7 @@
 #define WIFI_NAME_PASS_LEN_MAX 16
 #define WIFI_IPCMD_LEN_MAX 64
 #define WIFI_API_LEN_MAX 64
-#define WIFI_BUF_MAX 64
+#define WIFI_BUF_MAX 96
 #define MAX_LINES_PER_FILE 200
 #define MAX_LINES_PER_UPLOAD 4
 #define LINE_BUF_SIZE 30*MAX_LINES_PER_UPLOAD
@@ -144,7 +144,7 @@ void readUserSettingEEPROM()
 
 void initialize()
 {
-    Serial.begin(57600);
+    Serial.begin(9600);
     delay(5);
     DEBUG_PRINTLN(F(VER));
     pinMode(LDO, OUTPUT);
@@ -170,7 +170,6 @@ void loop()
     //DS3231_get(&t);
     digitalWrite(LDO, HIGH);
     digitalWrite(WIFI_CP_PD, HIGH);
-    updateRTC();
     DEBUG_PRINTLN(F("Upload"));
     uploadData();
     digitalWrite(LDO, LOW);
@@ -202,13 +201,16 @@ boolean connectWiFi() {
     char buffer[WIFI_BUF_MAX];
 
     //Serial.println(F(CONCMD1));
-    if (wifiConnected) return true;
+    if (wifiConnected) {
+        return findIP();
+    }
 
     cwjap(true);
     delay(10000);
     while (i++<10) {
         delay(1000);
         if (Serial.find("OK")) {
+            wifiConnected = true;
             return true;
         }
         /*
@@ -227,6 +229,35 @@ boolean connectWiFi() {
         */
     }
     return false;
+}
+
+boolean findIP() {
+    uint8_t i = 0;
+    uint8_t n = 0;
+    uint8_t j = 0;
+    uint8_t k = 0;
+    char buffer[WIFI_BUF_MAX];
+    Serial.println(F("AT+CIFSR"));
+    while (i++<10) {
+        delay(1000);
+        if ((n = Serial.available()) != 0) {
+            j = 0;
+            k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
+            while (j<k)
+                buffer[j++] = Serial.read();
+            buffer[k] = '\0';
+            if (strstr(buffer, "STAIP")) {
+                if (strstr(buffer, "0.0.0.0")) {
+                    delay(2000);
+                    Serial.println(F("AT+CIFSR"));
+                    continue;
+                }
+                else
+                    break;
+            }
+        }
+    }
+    return i <=10;
 }
 
 void cwjap(boolean real) {
@@ -357,3 +388,4 @@ boolean initializeSD()
     }
     return true;
 }
+

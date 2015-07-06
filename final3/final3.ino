@@ -7,6 +7,7 @@
 #define CONFIG_UNIXTIME
 #define PCB0528
 #undef PRODUCTION
+#undef ENABLE_DEBUG_LOG
 
 #include <ds3231.h>
 #include <PowerSaver.h>
@@ -39,18 +40,34 @@
 
 
 const char string_0[] PROGMEM = "L%02d%02d%02d%c.csv";   // "String 0" etc are strings to store - change to suit.
-const char string_1[] PROGMEM = "";
+const char string_1[] PROGMEM = "OK";
+const char string_2[] PROGMEM = "ERROR";
+const char string_3[] PROGMEM = "CONNECT";
+const char string_4[] PROGMEM = "STAIP";
+const char string_5[] PROGMEM = "0.0.0.0";
 
 const char *const string_table[] PROGMEM =       // change "string_table" name to suit
 {   
-  string_0,
-  string_1 };
+    string_0,
+    string_1,
+    string_2,
+    string_3,
+    string_4,
+    string_5
+};
 
 
 ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW) 
 {
   PORTB ^= (1<<PORTB1);
 }
+
+#ifndef PRODUCTION
+ISR(BADISR_vect)
+{
+    for(;;) Serial.println("!");
+}
+#endif
 
 // SD card    ******************************
 SdFat sd;
@@ -90,6 +107,7 @@ boolean newLogFileNeeded = false;
 //#define SSID "iPhone"  //change to your WIFI name
 //#define PASS "s32nzqaofv9tv"  //wifi password
 #define CONCMD1 "AT+CWMODE=1"
+#define findIPCMD "AT+CIFSR"
 #define IPcmd "AT+CIPSTART=\"TCP\",\""
 #define getPort "\",80"
 #define XXXX "XXXX"
@@ -102,12 +120,12 @@ boolean newLogFileNeeded = false;
 #define DEBUG_PRINTLN(str) (Serial.println(str))
 #endif
 
-#ifdef PRODUCTION
-#define DEBUG_LOG_PRINT(str) ;
-#define DEBUG_LOG_PRINTLN(str) ;
-#else
 SdFile debugFile;
 char sdDebugLog[] = "sys.log";
+#ifndef ENABLE_DEBUG_LOG
+#define DEBUG_LOG_PRINT(str, needInit) ;
+#define DEBUG_LOG_PRINTLN(str, needInit) ;
+#else
 #define DEBUG_LOG_PRINT(str, needInit) {\
             tryOpenDebugFile(needInit);\
             debugFile.print(str);\
@@ -263,7 +281,9 @@ void loop()
         digitalWrite(NPN_Q1, LOW);
 #endif
         pinMode(SDcsPin, OUTPUT);
+        dummyAckTest();
         uploadData();
+        //acknowledgeTest();
         //DS3231_get(&t);
         while (nextUploadTime <= t.unixtime + 1) nextUploadTime += uploadInt;
     } else if (isSleepMode()) {
@@ -327,7 +347,7 @@ void goSleep()
     DEBUG_PRINTLN(alarm);
     DEBUG_LOG_PRINTLN(t.unixtime, false);
     DEBUG_LOG_PRINTLN(alarm, false);
-    delay(5);  // give some delay
+    delay(1000);  // give some delay
 #endif
     digitalWrite(NPN_Q1, LOW);
     digitalWrite(WIFI_CP_PD, LOW);
@@ -343,12 +363,13 @@ void goSleep()
     chip.turnOnSPI();   // turn on SPI bus once the processor wakes up
     // Important: LDO has to been turned on before any RTC operation;
     // otherwise it never wakes up
-    DEBUG_PRINTLN(F("LDO ON"));
+    delay(1000);    // important delay to ensure SPI bus is properly activated
+    digitalWrite(NPN_Q1, LOW);
+    digitalWrite(WIFI_CP_PD, LOW);
     digitalWrite(LDO, HIGH);
     delay(2000);    // important delay to ensure SPI bus is properly activated
     //if (DS3231_triggered_a1()) {
         //Serial.println(F("**Alarm has been triggered**"));
-        DEBUG_PRINTLN(F("a1f"));
         DS3231_clear_a1f();
         delay(10);
     //}
@@ -401,7 +422,7 @@ boolean createNewLogFile(boolean overwrite)
         yy = (t.year < 2000) ? 0 : t.year - 2000;
         sprintf(sdLogFile, fmt, yy, t.mon, t.mday, c++);
         if (sd.exists(sdLogFile)) {
-            Serial.print(sdLogFile); Serial.println(F(" exists."));
+            DEBUG_PRINT(sdLogFile); DEBUG_PRINTLN(F(" exists."));
             if (!overwrite) continue;
         }
         if (!myFile.open(sdLogFile, O_WRITE | O_CREAT | O_TRUNC)) {
@@ -476,7 +497,6 @@ boolean uploadData()
     if (!connectWiFi()) {
         return false;
     } else {
-        // Important: print nothing before TCP connecton. Otherwise, it might fail
         //DEBUG_PRINTLN(F("WiFi Connected"));
         ifstream sdin(sdLogFile);
         if (sdin.good()) {
@@ -534,16 +554,22 @@ boolean connectWiFi() {
     uint8_t n = 0;
     uint8_t j = 0;
     uint8_t k = 0;
-    char buffer[WIFI_BUF_MAX];
 
+    char okStr[4];
+    strcpy_P(okStr, (char*)pgm_read_word(&(string_table[1])));
     //Serial.println(F(CONCMD1));
-    if (wifiConnected) return true;
+    if (wifiConnected) {
+        return findIP();
+    }
 
     cwjap(true);
     delay(10000);
     while (i++<10) {
         delay(1000);
-        if (Serial.find("OK")) return true;
+        if (Serial.find(okStr)) {
+            wifiConnected = true;
+            return true;
+        }
         /*
         if ((n = Serial.available()) != 0) {
             j = 0;
@@ -560,6 +586,40 @@ boolean connectWiFi() {
         */
     }
     return false;
+}
+
+boolean findIP() {
+    uint8_t i = 0;
+    uint8_t n = 0;
+    uint8_t j = 0;
+    uint8_t k = 0;
+    char buffer[WIFI_BUF_MAX];
+
+    char staipStr[8];
+    char zeroipStr[10];
+
+    strcpy_P(staipStr, (char*)pgm_read_word(&(string_table[4])));
+    strcpy_P(zeroipStr, (char*)pgm_read_word(&(string_table[5])));
+    Serial.println(F(findIPCMD));
+    while (i++<10) {
+        delay(1000);
+        if ((n = Serial.available()) != 0) {
+            j = 0;
+            k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
+            while (j<k)
+                buffer[j++] = Serial.read();
+            buffer[k] = '\0';
+            if (strstr(buffer, staipStr)) {
+                if (strstr(buffer, zeroipStr)) {
+                    delay(2000);
+                    Serial.println(F(findIPCMD));
+                    continue;
+                } else
+                    break;
+            }
+        }
+    }
+    return i <=10;
 }
 
 void cwjap(boolean real) {
@@ -588,6 +648,7 @@ boolean transmitData(char* data, uint16_t lines) {
     getAPI(cmd, WIFI_API_LEN_MAX);
     length = strlen(cmd) + strlen(data) + 2;
 
+    // Important: print nothing before TCP connecton. Otherwise, it might fail
     // AT is essential to make upload consecutively successfully
     if (!initWifiSerial()) return false;
     if (!initDataSend(length)) return false;
@@ -615,8 +676,10 @@ boolean transmitData(char* data, uint16_t lines) {
 boolean initWifiSerial()
 {
     uint8_t i = 0;
+    char okStr[4];
+    strcpy_P(okStr, (char*)pgm_read_word(&(string_table[1])));
     delay(5);
-    while (!Serial.find("OK")) {
+    while (!Serial.find(okStr)) {
         if (i++>10) return false;
         Serial.println(F("AT"));
         delay(100);
@@ -639,7 +702,12 @@ boolean initDataSend(int length)
     uint8_t j = 0;
     uint8_t k = 0;
     char buffer[WIFI_BUF_MAX];
-    Serial.find("ERROR");
+    char errorStr[6];
+    char connectStr[10];
+    strcpy_P(errorStr, (char*)pgm_read_word(&(string_table[2])));
+    strcpy_P(connectStr, (char*)pgm_read_word(&(string_table[3])));
+
+    Serial.find(errorStr);
     cipstart();
     delay(5000);
     while (1) {
@@ -656,9 +724,9 @@ boolean initDataSend(int length)
             while (j<k)
                 buffer[j++] = Serial.read();
             buffer[k] = '\0';
-            if (strstr(buffer, "CONNECT")) {
+            if (strstr(buffer, connectStr)) {
                 break;
-            } else if (strstr(buffer, "ERROR")) {
+            } else if (strstr(buffer, errorStr)) {
                 cipstart();
             }
         }
@@ -795,6 +863,7 @@ boolean acknowledgeTest()
     int i = 0, j = 0;
     DEBUG_PRINTLN(F("ACK Test"));
     DEBUG_LOG_PRINTLN(F("ACK Test"), false);
+    DEBUG_LOG_PRINTLN(t.unixtime, false);
     digitalWrite(LED, LOW);
     while (1) {
         i++;
@@ -823,4 +892,25 @@ boolean acknowledgeTest()
     wifiConnected = true;
     digitalWrite(LED, HIGH);
     return true;
+}
+
+boolean dummyAckTest()
+{
+    int i = 0, j = 0;
+    DEBUG_PRINTLN(F("Dummy ACK Test"));
+    if (!initializeSD()) return false;
+    delay(2000);
+    /*
+    while (1) {
+        i++;
+        if (captureStoreData()) j++;
+        if (j == 2*MAX_LINES_PER_UPLOAD) break;
+        if (i >= 3*MAX_LINES_PER_UPLOAD) {
+            DEBUG_PRINTLN(F("Cap fail"));
+            return false;
+        }
+        updateRTC();
+        delay(2000);
+    }
+    */
 }
