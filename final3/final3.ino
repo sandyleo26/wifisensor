@@ -6,7 +6,7 @@
 // conditional compile
 #define CONFIG_UNIXTIME
 #define PCB0528
-#undef PRODUCTION
+#define PRODUCTION
 #undef ENABLE_DEBUG_LOG
 
 #include <ds3231.h>
@@ -62,12 +62,12 @@ ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW)
   PORTB ^= (1<<PORTB1);
 }
 
-#ifndef PRODUCTION
-ISR(BADISR_vect)
-{
-    for(;;) Serial.println("!");
-}
-#endif
+//#ifndef PRODUCTION
+//ISR(BADISR_vect)
+//{
+//    for(;;) Serial.println("!");
+//}
+//#endif
 
 // SD card    ******************************
 SdFat sd;
@@ -214,6 +214,7 @@ void readUserSettingEEPROM()
     }
     myFile.close();
 
+
     captureInt = getCaptureInt();
     uploadInt = getUploadInt();
 }
@@ -281,9 +282,8 @@ void loop()
         digitalWrite(NPN_Q1, LOW);
 #endif
         pinMode(SDcsPin, OUTPUT);
-        dummyAckTest();
+        //dummyAckTest();
         uploadData();
-        //acknowledgeTest();
         //DS3231_get(&t);
         while (nextUploadTime <= t.unixtime + 1) nextUploadTime += uploadInt;
     } else if (isSleepMode()) {
@@ -352,7 +352,7 @@ void goSleep()
     digitalWrite(NPN_Q1, LOW);
     digitalWrite(WIFI_CP_PD, LOW);
     digitalWrite(LDO, LOW);
-    delay(5);  // give some delay
+    delay(100);  // give some delay
     chip.turnOffADC();
     chip.turnOffSPI();
     chip.turnOffWDT();
