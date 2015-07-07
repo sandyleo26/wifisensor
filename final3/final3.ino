@@ -6,7 +6,7 @@
 // conditional compile
 #define CONFIG_UNIXTIME
 #define PCB0528
-#define PRODUCTION
+#undef PRODUCTION
 #undef ENABLE_DEBUG_LOG
 
 #include <ds3231.h>
