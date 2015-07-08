@@ -6,7 +6,7 @@
 // conditional compile
 #define CONFIG_UNIXTIME
 #define PCB0528
-#undef PRODUCTION
+#define PRODUCTION
 #undef ENABLE_DEBUG_LOG
 
 #include <ds3231.h>
@@ -270,7 +270,7 @@ void loop()
         digitalWrite(LDO, HIGH);
         digitalWrite(WIFI_CP_PD, LOW);
         digitalWrite(NPN_Q1, HIGH);
-        //pinMode(SDcsPin, OUTPUT);
+        pinMode(SDcsPin, OUTPUT);
         captureStoreData();
         //DS3231_get(&t);
         while (nextCaptureTime <= t.unixtime + 1) nextCaptureTime += captureInt;
