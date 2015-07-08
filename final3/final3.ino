@@ -15,6 +15,8 @@
 #include <Wire.h>
 #include <EEPROM.h>
 #include "HTU21D.h"
+#include <avr/sleep.h>
+#include <avr/power.h>
 
 // RTC    ******************************
 #define VER __DATE__
@@ -289,7 +291,8 @@ void loop()
     } else if (isSleepMode()) {
         DEBUG_PRINTLN(F("Sleep"));
         setAlarm1();
-        goSleep();
+        //goSleep();
+        sleepGammon();
     }
 }
 
@@ -373,6 +376,45 @@ void goSleep()
         DS3231_clear_a1f();
         delay(10);
     //}
+}
+
+void sleepGammon()
+{
+    chip.sleepInterruptSetup();
+    digitalWrite(NPN_Q1, LOW);
+    digitalWrite(WIFI_CP_PD, LOW);
+    digitalWrite(LDO, LOW);
+    delay(100);  // give some delay
+
+    /*
+    for (byte i = 0; i <= A5; i++) {
+        pinMode (i, OUTPUT);    // changed as per below
+        digitalWrite (i, LOW);  //     ditto
+    }
+    */
+    // disable ADC
+    chip.turnOffADC();
+
+    set_sleep_mode (SLEEP_MODE_PWR_DOWN);
+    noInterrupts ();           // timed sequence follows
+    sleep_enable();
+
+    // turn off brown-out enable in software
+    MCUCR = bit (BODS) | bit (BODSE);
+    MCUCR = bit (BODS);
+    interrupts ();             // guarantees next instruction executed
+    sleep_cpu ();              // sleep within 3 clock cycles of above
+    sleep_disable();
+    delay(1000);    // important delay to ensure SPI bus is properly activated
+    Serial.println("NPN_Q1");
+    digitalWrite(NPN_Q1, LOW);
+    Serial.println("WIFI_CP_PD");
+    digitalWrite(WIFI_CP_PD, LOW);
+    Serial.println("LDO");
+    chip.turnOnADC();
+    digitalWrite(LDO, HIGH);
+    delay(2000);    // important delay to ensure SPI bus is properly activated
+    DS3231_clear_a1f();
 }
 
 bool isCaptureMode()
