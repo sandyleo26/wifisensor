@@ -27,8 +27,8 @@
 #define WIFI_API_LEN_MAX 64
 #define WIFI_BUF_MAX 64
 #define MAX_LINES_PER_FILE 200
-#define MAX_LINES_PER_UPLOAD 4
-#define LINE_BUF_SIZE 30*MAX_LINES_PER_UPLOAD
+#define MAX_LINES_PER_UPLOAD 10
+#define LINE_BUF_SIZE 28*MAX_LINES_PER_UPLOAD
 #define RTC_DIFF_FACTOR 2
 #define SD_WAIT_FOR_WIFI_DELAY 2000
 
@@ -41,12 +41,18 @@
 #define SD_DEBUG_OPEN_ERROR 6
 
 
-const char string_0[] PROGMEM = "L%02d%02d%02d%c.csv";   // "String 0" etc are strings to store - change to suit.
+//const char string_0[] PROGMEM = "L%02d%02d%02d%c.csv";   // "String 0" etc are strings to store - change to suit.
+const char string_0[] PROGMEM = "0";   // "String 0" etc are strings to store - change to suit.
 const char string_1[] PROGMEM = "OK";
 const char string_2[] PROGMEM = "ERROR";
-const char string_3[] PROGMEM = "CONNECT";
+// should be CONNECT
+const char string_3[] PROGMEM = "CON";
+// should be STAIP
 const char string_4[] PROGMEM = "STAIP";
-const char string_5[] PROGMEM = "0.0.0.0";
+// should be 0.0.0.0
+const char string_5[] PROGMEM = ".0.0";
+// should be CONNECTED
+const char string_6[] PROGMEM = "ECT";
 
 const char *const string_table[] PROGMEM =       // change "string_table" name to suit
 {   
@@ -55,7 +61,8 @@ const char *const string_table[] PROGMEM =       // change "string_table" name t
     string_2,
     string_3,
     string_4,
-    string_5
+    string_5,
+    string_6
 };
 
 
@@ -74,9 +81,9 @@ ISR(PCINT0_vect)  // Setup interrupts on D8; Interrupt (RTC SQW)
 // SD card    ******************************
 SdFat sd;
 SdFile myFile;
-char sdLogFile[15] = "";
+char sdLogFile[13] = "";
 char configFile[] = "config.txt";
-char configFileBak[] = "cfg.bak";
+//char configFileBak[] = "cfg.bak";
 #define SDcsPin 9 // D9
 
 // HTU21D    ******************************
@@ -87,23 +94,27 @@ HTU21D htu;
 #define NPN_Q1 4 // D4 control DHT & SD Card
 
 // User Configuration: SSID,PASS,API,CAPINT,UPINT
-uint16_t captureInt = 15, uploadInt = 30;  // in seconds
+uint16_t captureInt = 15;
+uint32_t uploadInt = 30;
 
 // Low Power 
 PowerSaver chip;  // declare object for PowerSaver class
 
 // Control flag
-uint32_t captureCount = 0, uploadCount = 0, uploadedLines = 0;
+uint32_t captureCount = 0, uploadedLines = 0;
 uint32_t nextCaptureTime, nextUploadTime, alarm;
+uint16_t batteryLevel = 0;
 struct ts t;
 boolean wifiConnected = false;
 boolean newLogFileNeeded = false;
+boolean batteryInfoUploaded = false;
 
 // LED
 #define LED 2
 
 // regulator
 #define LDO 5
+#define BATTERY A0  // select the input pin for the battery sense point
 
 // wifi
 //#define SSID "iPhone"  //change to your WIFI name
@@ -202,10 +213,10 @@ void readUserSettingEEPROM()
     //     sd.errorHalt("O_EXCL");
     // }
     if (!myFile.open(configFile, O_READ)) {
-        if (!myFile.open(configFileBak, O_READ)) {
+        //if (!myFile.open(configFileBak, O_READ)) {
             deviceFailureShutdown();
             blinkError(SD_CONFIG_ERROR);
-        }
+        //}
     }
 
     while (myFile.available()) {
@@ -256,9 +267,11 @@ void initialize()
     // 2. check wifi connection
 
     // HTU21D
-    htu.begin();
+    //htu.begin();
+    initializeHTU();
 
     // 4. check battery
+    //analogReference(INTERNAL);
 }
 
 void loop()
@@ -386,12 +399,9 @@ void sleepGammon()
     digitalWrite(LDO, LOW);
     delay(100);  // give some delay
 
-    /*
-    for (byte i = 0; i <= A5; i++) {
-        pinMode (i, OUTPUT);    // changed as per below
-        digitalWrite (i, LOW);  //     ditto
-    }
-    */
+    // turn off I2C
+    turnOffI2C();
+
     // disable ADC
     chip.turnOffADC();
 
@@ -406,13 +416,14 @@ void sleepGammon()
     sleep_cpu ();              // sleep within 3 clock cycles of above
     sleep_disable();
     delay(1000);    // important delay to ensure SPI bus is properly activated
-    Serial.println("NPN_Q1");
+    DEBUG_PRINTLN("NPN_Q1");
     digitalWrite(NPN_Q1, LOW);
-    Serial.println("WIFI_CP_PD");
+    DEBUG_PRINTLN("WIFI_CP_PD");
     digitalWrite(WIFI_CP_PD, LOW);
-    Serial.println("LDO");
+    DEBUG_PRINTLN("LDO");
     chip.turnOnADC();
     digitalWrite(LDO, HIGH);
+    initializeI2C();
     delay(2000);    // important delay to ensure SPI bus is properly activated
     DS3231_clear_a1f();
 }
@@ -455,14 +466,15 @@ boolean createNewLogFile()
 boolean createNewLogFile(boolean overwrite)
 {
     char c = 'a';
-    char fmt[24];
+    //char fmt[24];
     uint8_t i = 0, yy;
 
-    strcpy_P(fmt, (char*)pgm_read_word(&(string_table[0])));
+    //strcpy_P(fmt, (char*)pgm_read_word(&(string_table[0])));
     //DS3231_get(&t);
     while(i++<26) {
-        yy = (t.year < 2000) ? 0 : t.year - 2000;
-        sprintf(sdLogFile, fmt, yy, t.mon, t.mday, c++);
+        //yy = (t.year < 2000) ? 0 : t.year - 2000;
+        //sprintf(sdLogFile, fmt, yy, t.mon, t.mday, c++);
+        generateNewLogName(c++);
         if (sd.exists(sdLogFile)) {
             DEBUG_PRINT(sdLogFile); DEBUG_PRINTLN(F(" exists."));
             if (!overwrite) continue;
@@ -488,8 +500,8 @@ boolean captureStoreData()
     uint8_t yy;
     temp = htu.readTemperature();
     hum = htu.readHumidity();
-    dtostrf(temp, 3, 1, ttmp);
-    dtostrf(hum, 3, 1, htmp);
+    //dtostrf(temp, 3, 1, ttmp);
+    //dtostrf(hum, 3, 1, htmp);
         
     // TODO: remove it when found reason why red SD card will fail 1 time after upload
     //delay(2000);
@@ -513,9 +525,11 @@ boolean captureStoreData()
     if (t.hour<10) myFile.print(0); myFile.print(t.hour);
     if (t.min<10) myFile.print(0); myFile.print(t.min);
     if (t.sec<10) myFile.print(0); myFile.print(t.sec); myFile.print(F(",")); 
-    myFile.print(ttmp); myFile.print(F(",")); myFile.print(htmp); myFile.println(F("$"));
+    //myFile.print(ttmp); myFile.print(F(",")); myFile.print(htmp); myFile.println(F("$"));
+    myFile.print(temp); myFile.print(F(",")); myFile.print(hum); myFile.println(F("$"));
     myFile.close();
     captureCount++;
+    delay(100);
     return true;
 }
 
@@ -562,11 +576,11 @@ boolean uploadData()
             offset = strlen(buffer);
 
 #ifndef PRODUCTION
-            DEBUG_PRINTLN(lineNum);
-            DEBUG_PRINTLN(offset);
-            DEBUG_PRINTLN(multilines);
-            DEBUG_PRINTLN(buffer);
-            delay(100);
+            //DEBUG_PRINTLN(lineNum);
+            //DEBUG_PRINTLN(offset);
+            //DEBUG_PRINTLN(multilines);
+            //DEBUG_PRINTLN(buffer);
+            //delay(100);
 #endif
 
             if (multilines == MAX_LINES_PER_UPLOAD) {
@@ -586,7 +600,7 @@ boolean uploadData()
             //createNewLogFile();
             newLogFileNeeded = true;
         }
-        uploadCount++;
+        //uploadCount++;
         return uploadedLines > prevUploadedLines;
     }
 }
@@ -635,6 +649,7 @@ boolean findIP() {
     uint8_t n = 0;
     uint8_t j = 0;
     uint8_t k = 0;
+    uint8_t pos = 0;
     char buffer[WIFI_BUF_MAX];
 
     char staipStr[8];
@@ -642,23 +657,35 @@ boolean findIP() {
 
     strcpy_P(staipStr, (char*)pgm_read_word(&(string_table[4])));
     strcpy_P(zeroipStr, (char*)pgm_read_word(&(string_table[5])));
+    //while (Serial.available() > 0) Serial.read();
     Serial.println(F(findIPCMD));
     while (i++<10) {
         delay(1000);
         if ((n = Serial.available()) != 0) {
             j = 0;
-            k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
-            while (j<k)
-                buffer[j++] = Serial.read();
-            buffer[k] = '\0';
-            if (strstr(buffer, staipStr)) {
-                if (strstr(buffer, zeroipStr)) {
-                    delay(2000);
-                    Serial.println(F(findIPCMD));
-                    continue;
-                } else
-                    break;
+            k = n < WIFI_BUF_MAX - pos - 1 ? n : WIFI_BUF_MAX - pos - 1;
+            while (j++<k)
+                buffer[pos++] = Serial.read();
+            buffer[pos] = '\0';
+        }
+        if (strstr(buffer, staipStr)) {
+            if (strstr(buffer, zeroipStr)) {
+                //DEBUG_PRINTLN(buffer);
+                delay(2000);
+                if (!initWifiSerial()) return false;
+                pos = 0;
+                Serial.println(F(findIPCMD));
+            } else {
+                //DEBUG_PRINTLN(buffer);
+                //delay(100);
+                break;
             }
+        } else if (i%4==0) {
+                //DEBUG_PRINTLN(buffer);
+                delay(2000);
+                if (!initWifiSerial()) return false;
+                pos = 0;
+                Serial.println(F(findIPCMD));
         }
     }
     return i <=10;
@@ -687,16 +714,19 @@ boolean transmitData(char* data, uint16_t lines) {
     uint8_t i = 0;
 
     //DEBUG_PRINTLN(F("transmitData"));
-    getAPI(cmd, WIFI_API_LEN_MAX);
-    length = strlen(cmd) + strlen(data) + 2;
 
     // Important: print nothing before TCP connecton. Otherwise, it might fail
     // AT is essential to make upload consecutively successfully
     if (!initWifiSerial()) return false;
+
+    if (!getAPI(cmd, WIFI_API_LEN_MAX)) return false;
+
+    length = strlen(cmd) + strlen(data) + 2;
     if (!initDataSend(length)) return false;
 
+    i = 0;
     while (!Serial.find(">")) {
-        if (i++>20) return false;
+        if (i++>10) return false;
         delay(200);
         // Serial.println(F("AT+CIPCLOSE"));
         // if (!initWifiSerial()) return false;
@@ -710,8 +740,11 @@ boolean transmitData(char* data, uint16_t lines) {
     //Serial.println(F("AT+CIPCLOSE"));
     uploadedLines += lines;
     // This delay is necessary sometimes for uploading to complete
-    DEBUG_PRINTLN(F("transmit finished"));
+    // TODO: use flush? http://forum.arduino.cc/index.php?topic=151014.0
+    Serial.flush();
     delay(500);
+    DEBUG_PRINTLN(F("transmit finished"));
+
     return true;
 }
 
@@ -743,41 +776,51 @@ boolean initDataSend(int length)
     uint8_t n = 0;
     uint8_t j = 0;
     uint8_t k = 0;
+    uint8_t pos = 0;
     char buffer[WIFI_BUF_MAX];
     char errorStr[6];
-    char connectStr[10];
+    char connectStr[5];
+    char connectStr2[5];
     strcpy_P(errorStr, (char*)pgm_read_word(&(string_table[2])));
     strcpy_P(connectStr, (char*)pgm_read_word(&(string_table[3])));
+    strcpy_P(connectStr2, (char*)pgm_read_word(&(string_table[6])));
 
     Serial.find(errorStr);
+    //while (Serial.available() > 0) Serial.read();
     cipstart();
-    delay(5000);
+    //delay(5000);
+    delay(2000);
     while (1) {
         // Don't use find, because it's likely ERROR is returned. So detect it.
         /*
         if (Serial.find("CONNECT"))
             break;
             */
-        if (i++>10) return false;
-        delay(1000);
+        if (i++>10) {return false;}
         if ((n = Serial.available()) != 0) {
             j = 0;
-            k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
-            while (j<k)
-                buffer[j++] = Serial.read();
-            buffer[k] = '\0';
-            if (strstr(buffer, connectStr)) {
-                break;
-            } else if (strstr(buffer, errorStr)) {
-                cipstart();
-            }
+            k = n < WIFI_BUF_MAX - pos - 1 ? n : WIFI_BUF_MAX - pos - 1;
+            while (j++<k)
+                buffer[pos++] = Serial.read();
+            buffer[pos] = '\0';
         }
+        if (strstr(buffer, connectStr) || strstr(buffer, connectStr2)) {
+            break;
+        } else if (strstr(buffer, errorStr) || i%4 == 0) {
+            //DEBUG_PRINTLN(buffer);
+            //delay(100);
+            delay(1000);
+            if (!initWifiSerial()) return false;
+            pos = 0;
+            cipstart();
+        }
+        delay(2000);
     }
     //Serial.println(F("AT+CIPMODE=0"));
     delay(100);
     Serial.print(F("AT+CIPSEND="));
     Serial.println(length);
-    delay(5);
+    delay(100);
     return true;
 }
 
@@ -820,9 +863,17 @@ void getIP(char* buf, uint8_t len)
     getConfigByPos(buf, 3, len);
 }
 
-void getAPI(char* buf, uint8_t len)
+boolean getAPI(char* buf, uint8_t len)
 {
-    getConfigByPos(buf, 4, len);
+    uint8_t apiLen = 0;
+    uint8_t i = 0;
+    while(apiLen < 30) {
+        delay(100);
+        getConfigByPos(buf, 4, len);
+        apiLen = strlen(buf);
+        if (i++>5) return false;
+    }
+    return true;
 }
 
 uint16_t getCaptureInt()
@@ -832,7 +883,7 @@ uint16_t getCaptureInt()
     return atoi(buf);
 }
 
-uint16_t getUploadInt()
+uint32_t getUploadInt()
 {
     char buf[CAPTURE_UPLOAD_INT_LEN_MAX];
     getConfigByPos(buf, 6, CAPTURE_UPLOAD_INT_LEN_MAX);
@@ -845,12 +896,12 @@ void updateRTC()
     uint32_t tt;
     int32_t diff;
     tt = t.unixtime;
+    DS3231_get(&t);
     while (i++<5) {
-        DS3231_get(&t);
         diff = int32_t(t.unixtime - tt);
         DEBUG_PRINTLN(F("DS3231_get"));
         if ((diff < 0) || (diff > int32_t(uploadInt))) {
-            delay(1000);
+            initializeRTC();
         } else {
             return;
         }
@@ -864,9 +915,10 @@ void updateRTC()
 void initializeRTC()
 {
     Wire.begin();
+    delay(100);
     DEBUG_PRINTLN(F("DS3231_init"));
     DS3231_init(DS3231_INTCN);
-    delay(1000);
+    delay(100);
     DS3231_clear_a1f();
     DS3231_get(&t);
 }
@@ -916,7 +968,7 @@ boolean acknowledgeTest()
             return false;
         }
         updateRTC();
-        delay(2000);
+        delay(1000);
     }
 
     i = 0;
@@ -942,17 +994,38 @@ boolean dummyAckTest()
     DEBUG_PRINTLN(F("Dummy ACK Test"));
     if (!initializeSD()) return false;
     delay(2000);
-    /*
-    while (1) {
-        i++;
-        if (captureStoreData()) j++;
-        if (j == 2*MAX_LINES_PER_UPLOAD) break;
-        if (i >= 3*MAX_LINES_PER_UPLOAD) {
-            DEBUG_PRINTLN(F("Cap fail"));
-            return false;
-        }
-        updateRTC();
-        delay(2000);
+}
+
+void turnOffI2C()
+{
+    TWCR &= ~(bit(TWEN) | bit(TWIE) | bit(TWEA));
+    digitalWrite(A4, LOW);
+    digitalWrite(A5, LOW);
+}
+
+void initializeHTU()
+{
+    // if RTC is initialized, then Wire.begin() is not necessary
+    //Wire.begin();
+    Wire.beginTransmission(HTDU21D_ADDRESS);
+    Wire.write(SOFT_RESET);
+    Wire.endTransmission();
+}
+
+void initializeI2C()
+{
+    Wire.begin();
+}
+
+void uploadBatteryInfo()
+{
+    // update battery information every 5 days
+    if (batteryLevel == 0 || (batteryInfoUploaded == false && t.mday%5 == 0)) {
+        batteryLevel = analogRead(BATTERY);
+        myFile.print(F("&b="));
+        myFile.print(batteryLevel);
+        batteryInfoUploaded = true;
     }
-    */
+    else if (t.mday%5!=0)
+        batteryInfoUploaded = false;
 }

@@ -4,7 +4,7 @@ void debugPrintTime()
 {
     DS3231_get(&t);
     char buff[BUFF_MAX];
-    snprintf(buff, BUFF_MAX, "%02d:%02d:%02d,cap:%d,up:%d,",t.hour, t.min, t.sec, captureCount, uploadCount);
+    snprintf(buff, BUFF_MAX, "%02d:%02d:%02d,cap:%d,up:%d,",t.hour, t.min, t.sec, captureCount, uploadedLines);
     Serial.println(buff);
 }
 
@@ -125,3 +125,44 @@ String getAllEEPROM()
     return str;
 }
 
+void generateNewLogName(char c)
+{
+    //L150710a.csv
+    sdLogFile[0] = 'L';
+    int2Str(sdLogFile+1, t.year-2000);
+    if (t.mon < 10) {
+        sdLogFile[3] = '0';
+        int2Str(sdLogFile+4, t.mon);
+    } else {
+        int2Str(sdLogFile+3, t.mon);
+    }
+    if (t.mday < 10) {
+        sdLogFile[5] = '0';
+        int2Str(sdLogFile+6, t.mday);
+    } else {
+        int2Str(sdLogFile+5, t.mday);
+    }
+    sdLogFile[7] = c;
+    sdLogFile[8] = '.';
+    sdLogFile[9] = 'c';
+    sdLogFile[10] = 's';
+    sdLogFile[11] = 'v';
+    sdLogFile[12] = '\0';
+}
+
+void int2Str(char *buf, uint8_t i)
+{
+    uint8_t L = 0;
+    char c;
+    char b;  // lower-byte of i
+    b = char( i );
+    if( b > 9 ) {
+        c = 1;
+        buf[L++] = c + 48;
+        b -= c * 10;
+    }
+    // last digit
+    buf[L++] = b + 48;
+    // null terminator
+    buf[L] = 0;  
+}
