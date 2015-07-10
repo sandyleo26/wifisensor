@@ -19,7 +19,7 @@ unsigned long prev = 5000, interval = 5000;
 
 void setup()
 {
-    Serial.begin(19200);
+    Serial.begin(9600);
     pinMode(LDO, OUTPUT);
     digitalWrite(LDO, HIGH);
     Wire.begin();
