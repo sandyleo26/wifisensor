@@ -5,8 +5,8 @@
 //****************************************************************
 // conditional compile
 #define CONFIG_UNIXTIME
-#define PCB0528
-#undef PRODUCTION
+#undef PCB0528
+#define PRODUCTION
 #undef ENABLE_DEBUG_LOG
 
 #include <ds3231.h>
@@ -53,6 +53,7 @@ const char string_4[] PROGMEM = "STAIP";
 const char string_5[] PROGMEM = ".0.0";
 // should be CONNECTED
 const char string_6[] PROGMEM = "ECT";
+const char string_7[] PROGMEM = "CLO";
 
 const char *const string_table[] PROGMEM =       // change "string_table" name to suit
 {   
@@ -62,7 +63,8 @@ const char *const string_table[] PROGMEM =       // change "string_table" name t
     string_3,
     string_4,
     string_5,
-    string_6
+    string_6,
+    string_7
 };
 
 
@@ -350,10 +352,11 @@ void calculateNextCaptureUploadTime()
     //nextCaptureTime = t.unixtime;
     nextUploadTime = nextCaptureTime + uploadInt;
     //dayclock = (uint32_t)tempCaptureTime % SECONDS_DAY;
-#endif
+#else
     // roundTime2Quarter for production; otherwise, straightly add interval
     nextCaptureTime = t.unixtime;
     nextUploadTime = t.unixtime + uploadInt;
+#endif
 }
 
 void goSleep()
@@ -721,6 +724,7 @@ boolean transmitData(char* data, uint16_t lines) {
     char cmd[WIFI_API_LEN_MAX];
     int length;
     uint8_t i = 0;
+    char closedStr[4];
 
     //DEBUG_PRINTLN(F("transmitData"));
 
@@ -747,11 +751,18 @@ boolean transmitData(char* data, uint16_t lines) {
     Serial.print(cmd); Serial.print(data); Serial.print(F("\r\n"));
     //wifiConnected = true;
     //Serial.println(F("AT+CIPCLOSE"));
-    uploadedLines += lines;
-    // This delay is necessary sometimes for uploading to complete
     // TODO: use flush? http://forum.arduino.cc/index.php?topic=151014.0
     Serial.flush();
-    delay(500);
+    // This delay is necessary sometimes for uploading to complete
+    delay(100);
+    strcpy_P(closedStr, (char*)pgm_read_word(&(string_table[7])));
+    delay(100);
+    i = 0;
+    while (!Serial.find(closedStr)) {
+        if (i++>3) return false;
+        delay(100);
+    }
+    uploadedLines += lines;
     DEBUG_PRINTLN(F("transmit finished"));
 
     return true;
@@ -971,8 +982,8 @@ boolean acknowledgeTest()
     while (1) {
         i++;
         if (captureStoreData()) j++;
-        if (j == 2*MAX_LINES_PER_UPLOAD) break;
-        if (i >= 3*MAX_LINES_PER_UPLOAD) {
+        if (j == 1*MAX_LINES_PER_UPLOAD) break;
+        if (i >= 2*MAX_LINES_PER_UPLOAD) {
             DEBUG_PRINTLN(F("Cap fail"));
             return false;
         }
@@ -988,7 +999,7 @@ boolean acknowledgeTest()
             return false;
         }
     }
-    if (uploadedLines != 2*MAX_LINES_PER_UPLOAD)
+    if (uploadedLines != MAX_LINES_PER_UPLOAD)
         return false;
     DEBUG_PRINTLN(F("ACK Pass"));
     DEBUG_LOG_PRINTLN(F("ACK Pass"), false);
@@ -1033,7 +1044,7 @@ void uploadBatteryInfo()
         int newLevel = analogRead(BATTERY);
         if (newLevel < batteryLevel || batteryLevel == 0)
             batteryLevel = newLevel;
-        myFile.print(F("&b="));
+        myFile.print(F("b="));
         myFile.print(batteryLevel);
         batteryInfoUploaded = true;
     }
