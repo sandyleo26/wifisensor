@@ -6,7 +6,7 @@
 // conditional compile
 #define CONFIG_UNIXTIME
 #define PCB0528
-#define PRODUCTION
+#undef PRODUCTION
 #undef ENABLE_DEBUG_LOG
 
 #include <ds3231.h>
@@ -271,7 +271,7 @@ void initialize()
     initializeHTU();
 
     // 4. check battery
-    //analogReference(INTERNAL);
+    analogReference(INTERNAL);
 }
 
 void loop()
@@ -526,10 +526,16 @@ boolean captureStoreData()
     if (t.min<10) myFile.print(0); myFile.print(t.min);
     if (t.sec<10) myFile.print(0); myFile.print(t.sec); myFile.print(F(",")); 
     //myFile.print(ttmp); myFile.print(F(",")); myFile.print(htmp); myFile.println(F("$"));
-    myFile.print(temp); myFile.print(F(",")); myFile.print(hum); myFile.println(F("$"));
+    myFile.print(temp); myFile.print(F(",")); myFile.print(hum);
+    uploadBatteryInfo();
+    myFile.println(F("$"));
     myFile.close();
     captureCount++;
     delay(100);
+    if (batteryLevel < 800) {
+        sleepGammon();
+    }
+
     return true;
 }
 
@@ -539,6 +545,9 @@ boolean uploadData()
     uint16_t lineNum = 0, offset = 0, multilines = 0;
     char buffer[LINE_BUF_SIZE];
     uint32_t prevUploadedLines = uploadedLines;
+
+    if (batteryLevel < 840)
+        return false;
 
     DEBUG_PRINTLN(uploadedLines);
     DEBUG_PRINTLN(captureCount);
@@ -1021,7 +1030,9 @@ void uploadBatteryInfo()
 {
     // update battery information every 5 days
     if (batteryLevel == 0 || (batteryInfoUploaded == false && t.mday%5 == 0)) {
-        batteryLevel = analogRead(BATTERY);
+        int newLevel = analogRead(BATTERY);
+        if (newLevel < batteryLevel || batteryLevel == 0)
+            batteryLevel = newLevel;
         myFile.print(F("&b="));
         myFile.print(batteryLevel);
         batteryInfoUploaded = true;
