@@ -8,6 +8,7 @@
 #undef PCB0528
 #define PRODUCTION
 #undef ENABLE_DEBUG_LOG
+#define ROUND_TO_15MIN
 
 #include <ds3231.h>
 #include <PowerSaver.h>
@@ -340,20 +341,18 @@ void setAlarm1()
 void calculateNextCaptureUploadTime()
 {
     updateRTC();
-#ifdef PRODUCTION
+#ifdef ROUND_TO_15MIN
     uint32_t dayclock, tempUnixTime;
-    uint8_t second, minute, hour;
+    uint32_t second, minute, hour;
     dayclock = (uint32_t)t.unixtime % SECONDS_DAY;
     second = dayclock % 60;
     minute = (dayclock % 3600) / 60;
     hour = dayclock / 3600;
     tempUnixTime = t.unixtime - dayclock + 3600*hour;
     nextCaptureTime = tempUnixTime + (minute/15+1)*900;
-    //nextCaptureTime = t.unixtime;
     nextUploadTime = nextCaptureTime + uploadInt;
-    //dayclock = (uint32_t)tempCaptureTime % SECONDS_DAY;
-#else
     // roundTime2Quarter for production; otherwise, straightly add interval
+#else
     nextCaptureTime = t.unixtime;
     nextUploadTime = t.unixtime + uploadInt;
 #endif
