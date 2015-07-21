@@ -125,29 +125,29 @@ String getAllEEPROM()
     return str;
 }
 
-void generateNewLogName(char c)
+void generateNewLogName(char *tmpName, char c)
 {
     //L150710a.csv
-    sdLogFile[0] = 'L';
-    int2Str(sdLogFile+1, t.year-2000);
+    tmpName[0] = 'L';
+    int2Str(tmpName+1, t.year-2000);
     if (t.mon < 10) {
-        sdLogFile[3] = '0';
-        int2Str(sdLogFile+4, t.mon);
+        tmpName[3] = '0';
+        int2Str(tmpName+4, t.mon);
     } else {
-        int2Str(sdLogFile+3, t.mon);
+        int2Str(tmpName+3, t.mon);
     }
     if (t.mday < 10) {
-        sdLogFile[5] = '0';
-        int2Str(sdLogFile+6, t.mday);
+        tmpName[5] = '0';
+        int2Str(tmpName+6, t.mday);
     } else {
-        int2Str(sdLogFile+5, t.mday);
+        int2Str(tmpName+5, t.mday);
     }
-    sdLogFile[7] = c;
-    sdLogFile[8] = '.';
-    sdLogFile[9] = 'c';
-    sdLogFile[10] = 's';
-    sdLogFile[11] = 'v';
-    sdLogFile[12] = '\0';
+    tmpName[7] = c;
+    tmpName[8] = '.';
+    tmpName[9] = 'c';
+    tmpName[10] = 's';
+    tmpName[11] = 'v';
+    tmpName[12] = '\0';
 }
 
 void int2Str(char *buf, uint8_t i)
@@ -157,7 +157,7 @@ void int2Str(char *buf, uint8_t i)
     char b;  // lower-byte of i
     b = char( i );
     if( b > 9 ) {
-        c = 1;
+        c = b < 30 ? ( b < 20 ? 1 : 2 ) : 3;
         buf[L++] = c + 48;
         b -= c * 10;
     }

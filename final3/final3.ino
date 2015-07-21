@@ -22,7 +22,7 @@
 // RTC    ******************************
 #define VER __DATE__
 #define SECONDS_DAY 86400
-#define CAPTURE_UPLOAD_INT_LEN_MAX 8
+#define CAPTURE_UPLOAD_INT_LEN_MAX 16
 #define WIFI_NAME_PASS_LEN_MAX 16
 #define WIFI_IPCMD_LEN_MAX 64
 #define WIFI_API_LEN_MAX 64
@@ -45,16 +45,17 @@
 //const char string_0[] PROGMEM = "L%02d%02d%02d%c.csv";   // "String 0" etc are strings to store - change to suit.
 const char string_0[] PROGMEM = "0";   // "String 0" etc are strings to store - change to suit.
 const char string_1[] PROGMEM = "OK";
-const char string_2[] PROGMEM = "ERROR";
+const char string_2[] PROGMEM = "ERR";
 // should be CONNECT
 const char string_3[] PROGMEM = "CON";
 // should be STAIP
-const char string_4[] PROGMEM = "STAIP";
+const char string_4[] PROGMEM = "STA";
 // should be 0.0.0.0
 const char string_5[] PROGMEM = ".0.0";
 // should be CONNECTED
 const char string_6[] PROGMEM = "ECT";
 const char string_7[] PROGMEM = "CLO";
+const char string_8[] PROGMEM = "FAI";
 
 const char *const string_table[] PROGMEM =       // change "string_table" name to suit
 {   
@@ -65,7 +66,8 @@ const char *const string_table[] PROGMEM =       // change "string_table" name t
     string_4,
     string_5,
     string_6,
-    string_7
+    string_7,
+    string_8
 };
 
 
@@ -315,9 +317,10 @@ void loop()
 void setAlarm1()
 {
     uint32_t dayclock, wakeupTime;
-    uint8_t second, minute, hour;
-    wakeupTime = t.unixtime + alarm;
-    dayclock = (uint32_t)wakeupTime % SECONDS_DAY;
+    uint32_t second, minute, hour;
+    // -3 to compensate the time to wake up
+    wakeupTime = t.unixtime + alarm - 2;
+    dayclock = (uint32_t)wakeupTime % (uint32_t)SECONDS_DAY;
 
     second = dayclock % 60;
     minute = (dayclock % 3600) / 60;
@@ -426,7 +429,7 @@ void sleepGammon()
     chip.turnOnADC();
     digitalWrite(LDO, HIGH);
     initializeI2C();
-    delay(2000);    // important delay to ensure SPI bus is properly activated
+    delay(1000);    // important delay to ensure SPI bus is properly activated
     DS3231_clear_a1f();
 }
 
@@ -470,23 +473,25 @@ boolean createNewLogFile(boolean overwrite)
     char c = 'a';
     //char fmt[24];
     uint8_t i = 0, yy;
+    char tmpName[13];
 
     //strcpy_P(fmt, (char*)pgm_read_word(&(string_table[0])));
     //DS3231_get(&t);
     while(i++<26) {
         //yy = (t.year < 2000) ? 0 : t.year - 2000;
         //sprintf(sdLogFile, fmt, yy, t.mon, t.mday, c++);
-        generateNewLogName(c++);
-        if (sd.exists(sdLogFile)) {
-            DEBUG_PRINT(sdLogFile); DEBUG_PRINTLN(F(" exists."));
+        generateNewLogName(tmpName, c++);
+        if (sd.exists(tmpName)) {
+            DEBUG_PRINT(tmpName); DEBUG_PRINTLN(F(" exists."));
             if (!overwrite) continue;
         }
-        if (!myFile.open(sdLogFile, O_WRITE | O_CREAT | O_TRUNC)) {
-            DEBUG_PRINT(F("Failed to open ")); DEBUG_PRINTLN(sdLogFile);
+        if (!myFile.open(tmpName, O_WRITE | O_CREAT | O_TRUNC)) {
+            DEBUG_PRINT(F("Failed to open ")); DEBUG_PRINTLN(tmpName);
             myFile.close();
         } else {
             DEBUG_PRINT(F("New "));
-            DEBUG_PRINTLN(sdLogFile);
+            DEBUG_PRINTLN(tmpName);
+            strcpy(sdLogFile, tmpName);
             myFile.close();
             return true;
         }
@@ -621,36 +626,45 @@ boolean connectWiFi() {
     uint8_t n = 0;
     uint8_t j = 0;
     uint8_t k = 0;
+    uint8_t pos = 0;
+    char buffer[WIFI_BUF_MAX];
 
     char okStr[4];
+    char failStr[5];
     strcpy_P(okStr, (char*)pgm_read_word(&(string_table[1])));
+    strcpy_P(failStr, (char*)pgm_read_word(&(string_table[8])));
     //Serial.println(F(CONCMD1));
     if (wifiConnected) {
         return findIP();
     }
 
     cwjap(true);
-    delay(10000);
+    delay(6000);
     while (i++<10) {
         delay(1000);
+        /*
         if (Serial.find(okStr)) {
             wifiConnected = true;
             return true;
         }
-        /*
+        */
         if ((n = Serial.available()) != 0) {
             j = 0;
-            k = n < WIFI_BUF_MAX - 1 ? n : WIFI_BUF_MAX -1;
-            while (j<k)
-                buffer[j++] = Serial.read();
-            buffer[k] = '\0';
-            if (strstr(buffer, "OK")) {
-                break;
-            } else if (strstr(buffer, "FAIL")) {
-                cwjap(true);
-            }
+            k = n < WIFI_BUF_MAX - pos - 1 ? n : WIFI_BUF_MAX - pos - 1;
+            while (j++<k)
+                buffer[pos++] = Serial.read();
+            buffer[pos] = '\0';
         }
-        */
+        if (strstr(buffer, okStr)) {
+            wifiConnected = true;
+            return true;
+        } else if (strstr(buffer, failStr) || i%4==0) {
+            delay(1000);
+            if (!initWifiSerial()) return false;
+            pos = 0;
+            cwjap(true);
+            delay(2000);
+        }
     }
     return false;
 }
@@ -663,8 +677,8 @@ boolean findIP() {
     uint8_t pos = 0;
     char buffer[WIFI_BUF_MAX];
 
-    char staipStr[8];
-    char zeroipStr[10];
+    char staipStr[5];
+    char zeroipStr[6];
 
     strcpy_P(staipStr, (char*)pgm_read_word(&(string_table[4])));
     strcpy_P(zeroipStr, (char*)pgm_read_word(&(string_table[5])));
@@ -723,7 +737,7 @@ boolean transmitData(char* data, uint16_t lines) {
     char cmd[WIFI_API_LEN_MAX];
     int length;
     uint8_t i = 0;
-    char closedStr[4];
+    char closedStr[5];
 
     //DEBUG_PRINTLN(F("transmitData"));
 
@@ -797,7 +811,7 @@ boolean initDataSend(int length)
     uint8_t k = 0;
     uint8_t pos = 0;
     char buffer[WIFI_BUF_MAX];
-    char errorStr[6];
+    char errorStr[5];
     char connectStr[5];
     char connectStr2[5];
     strcpy_P(errorStr, (char*)pgm_read_word(&(string_table[2])));
@@ -861,8 +875,9 @@ void getConfigByPos(char *buf, uint8_t pos, uint8_t len)
     char val;
     boolean flag = false;
     int count = 0, i = 0, j = 0;
-    while (val != '$') {
+    while (1) {
         val = EEPROM.read(i++);
+        if (val == '$') break;
         if (val == ',') count++;
         if (count == pos-1 && flag == false) {flag = true; continue;} 
         if (count == pos) {break;}
@@ -899,14 +914,14 @@ uint16_t getCaptureInt()
 {
     char buf[CAPTURE_UPLOAD_INT_LEN_MAX];
     getConfigByPos(buf, 5, CAPTURE_UPLOAD_INT_LEN_MAX);
-    return atoi(buf);
+    return strtoul(buf, NULL, 0);
 }
 
 uint32_t getUploadInt()
 {
     char buf[CAPTURE_UPLOAD_INT_LEN_MAX];
     getConfigByPos(buf, 6, CAPTURE_UPLOAD_INT_LEN_MAX);
-    return atoi(buf);
+    return strtoul(buf, NULL, 0);
 }
 
 void updateRTC()
@@ -946,7 +961,7 @@ boolean initializeSD()
 {
     int i = 0;
     while (!sd.begin(SDcsPin, SPI_FULL_SPEED)) {
-        DEBUG_PRINT(++i); DEBUG_PRINTLN(F(" initialize fail."));
+        DEBUG_PRINTLN(F(" initialize fail."));
 #ifndef PRODUCTION
         int blinkCount = 0;
         while (blinkCount++<3) blink(SD_INIT_ERROR);
@@ -955,7 +970,7 @@ boolean initializeSD()
         delay(2000);
         digitalWrite(LDO, HIGH);
         delay(3000);
-        if (i > 3) return false;
+        if (i++ > 3) return false;
     }
     return true;
 }
@@ -969,6 +984,7 @@ void deviceFailureShutdown()
     chip.turnOffSPI();
     chip.turnOffWDT();
     chip.turnOffBOD();
+    turnOffI2C();
 }
 
 boolean acknowledgeTest()
