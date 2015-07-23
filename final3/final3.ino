@@ -642,12 +642,11 @@ boolean connectWiFi() {
     delay(6000);
     while (i++<10) {
         delay(1000);
-        /*
         if (Serial.find(okStr)) {
             wifiConnected = true;
             return true;
         }
-        */
+        /*
         if ((n = Serial.available()) != 0) {
             j = 0;
             k = n < WIFI_BUF_MAX - pos - 1 ? n : WIFI_BUF_MAX - pos - 1;
@@ -665,6 +664,7 @@ boolean connectWiFi() {
             cwjap(true);
             delay(2000);
         }
+        */
     }
     return false;
 }
