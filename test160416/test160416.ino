@@ -27,7 +27,7 @@
 #define WIFI_IPCMD_LEN_MAX 64
 #define WIFI_API_LEN_MAX 64
 #define WIFI_BUF_MAX 64
-#define MAX_LINES_PER_FILE 200
+#define MAX_LINES_PER_FILE 150
 #define MAX_LINES_PER_UPLOAD 10
 #define LINE_BUF_SIZE 28*MAX_LINES_PER_UPLOAD
 #define RTC_DIFF_FACTOR 2
@@ -133,43 +133,30 @@ boolean batteryInfoUploaded = false;
 
 SdFile debugFile;
 char sdDebugLog[] = "dbg.log";
-#ifndef ENABLE_DEBUG_LOG
-#define DEBUG_LOG_PRINT(str, needInit) ;
-#define DEBUG_LOG_PRINTLN(str, needInit) ;
+#ifdef ENABLE_DEBUG_LOG
+    #define DEBUG_LOG_OPEN() {\
+        return tryOpenDebugFile(false);\
+    }
+
+    #define DEBUG_LOG_CLOSE() {\
+        debugFile.close();\
+        delay(100);\
+    }
+
+    #define DEBUG_LOG_PRINT(str) {\
+        debugFile.print(str);\
+    }
+
+    #define DEBUG_LOG_PRINTLN(str) {\
+        debugFile.println(str);\
+    }
 #else
-#define DEBUG_LOG_PRINT(str, needInit) {\
-            tryOpenDebugFile(needInit);\
-            debugFile.print(str);\
-            delay(500);\
-            debugFile.close();\
-            delay(500);\
-        }
-
-#define DEBUG_LOG_PRINTLN(str, needInit) {\
-            tryOpenDebugFile(needInit);\
-            debugFile.println(str);\
-            delay(500);\
-            debugFile.close();\
-            delay(500);\
-        }
+// Disable LOG
+    #define DEBUG_LOG_OPEN() ;
+    #define DEBUG_LOG_CLOSE() ;
+    #define DEBUG_LOG_PRINT(str) ;
+    #define DEBUG_LOG_PRINTLN(str) ;
 #endif
-
-#define DEBUG_LOG_OPEN() {\
-    tryOpenDebugFile(false);\
-}
-
-#define DEBUG_LOG_CLOSE() {\
-    debugFile.close();\
-    delay(100);\
-}
-
-#define DEBUG_LOG_PRINT1(str) {\
-    debugFile.print(str);\
-}
-
-#define DEBUG_LOG_PRINTLN1(str) {\
-    debugFile.println(str);\
-}
 
 boolean tryOpenDebugFile(boolean needInit)
 {
@@ -181,8 +168,7 @@ boolean tryOpenDebugFile(boolean needInit)
     }
     if (!debugFile.open(sdDebugLog, O_RDWR | O_CREAT | O_AT_END)) {
         debugFile.close();
-        deviceFailureShutdown();
-        blinkError(SD_DEBUG_OPEN_ERROR);
+        return false;
     }
     return true;
 }
@@ -291,34 +277,46 @@ void initialize()
 
 void loop()
 {
-    //DS3231_get(&t);
     updateRTC();
+
     if (isCaptureMode()) {
+
+        // print debug info
         DEBUG_PRINTLN(F("Capture"));
+        DEBUG_PRINT(nextCaptureTime); DEBUG_PRINT(F(","));
+        DEBUG_PRINTLN(t.unixtime);
+
         digitalWrite(LDO, HIGH);
         digitalWrite(WIFI_CP_PD, LOW);
         digitalWrite(NPN_Q1, HIGH);
         pinMode(SDcsPin, OUTPUT);
         captureStoreData();
-        //DS3231_get(&t);
         while (nextCaptureTime <= t.unixtime + 1) nextCaptureTime += captureInt;
     } else if (isUploadMode()) {
+
+        // print debug info
         DEBUG_PRINTLN(F("Upload"));
+        DEBUG_PRINT(nextUploadTime); DEBUG_PRINT(F(","));
+        DEBUG_PRINT(alarm); DEBUG_PRINT(F(","));
+        DEBUG_PRINTLN(t.unixtime);
+
         digitalWrite(LDO, HIGH);
         digitalWrite(WIFI_CP_PD, LOW);
-#ifdef PCB0528
-        digitalWrite(NPN_Q1, HIGH);
-#else
         digitalWrite(NPN_Q1, LOW);
-#endif
         pinMode(SDcsPin, OUTPUT);
-        //dummyAckTest();
         uploadData();
-        //DS3231_get(&t);
         while (nextUploadTime <= t.unixtime + 1) nextUploadTime += uploadInt;
     } else if (isSleepMode()) {
+
+        // print debug info
         DEBUG_PRINTLN(F("Sleep"));
+        DEBUG_PRINT(nextCaptureTime); DEBUG_PRINT(F(","));
+        DEBUG_PRINT(nextUploadTime); DEBUG_PRINT(F(","));
+        DEBUG_PRINT(alarm); DEBUG_PRINT(F(","));
+        DEBUG_PRINTLN(t.unixtime);
+
         setAlarm1();
+
         //goSleep();
         sleepGammon();
     }
@@ -545,7 +543,7 @@ boolean captureStoreData()
     myFile.println(F("$"));
     myFile.close();
     captureCount++;
-    delay(100);
+    delay(1000);
     if (batteryLevel < 800) {
         sleepGammon();
     }
@@ -593,13 +591,11 @@ boolean uploadData()
             multilines++;
             offset = strlen(buffer);
 
-#ifndef PRODUCTION
             //DEBUG_PRINTLN(lineNum);
             //DEBUG_PRINTLN(offset);
             //DEBUG_PRINTLN(multilines);
             //DEBUG_PRINTLN(buffer);
             //delay(100);
-#endif
 
             if (multilines == MAX_LINES_PER_UPLOAD) {
                 if (!transmitData(buffer, multilines))
@@ -780,17 +776,17 @@ boolean transmitData(char* data, uint16_t lines) {
     //uint8_t pos = 0;
 
     //DEBUG_LOG_OPEN();
-    //DEBUG_LOG_PRINTLN1(F("data:"));
-    //DEBUG_LOG_PRINTLN1(data);
+    //DEBUG_LOG_PRINTLN(F("data:"));
+    //DEBUG_LOG_PRINTLN(data);
 
     //while ((n = Serial.readBytes(cmd, WIFI_BUF_MAX-1)) != 0 || i++ < 10) {
     //    if (n != 0) {
     //        cmd[n] = '\0';
-    //        DEBUG_LOG_PRINT1(cmd);
+    //        DEBUG_LOG_PRINT(cmd);
     //    }
     //}
     //
-    //DEBUG_LOG_PRINTLN1(F("\n\n"));
+    //DEBUG_LOG_PRINTLN(F("\n\n"));
     //DEBUG_LOG_CLOSE();
 
     // option 2: find "CLOSED" from response
@@ -1013,7 +1009,7 @@ boolean acknowledgeTest()
 {
     int i = 0, j = 0;
     DEBUG_PRINTLN(F("ACK Test"));
-    DEBUG_LOG_PRINTLN1(F("ACK Test"));
+    DEBUG_LOG_PRINTLN(F("ACK Test"));
     digitalWrite(LED, LOW);
     while (1) {
         i++;
@@ -1038,7 +1034,7 @@ boolean acknowledgeTest()
     if (uploadedLines != MAX_LINES_PER_UPLOAD)
         return false;
     DEBUG_PRINTLN(F("ACK Pass"));
-    DEBUG_LOG_PRINTLN1(F("ACK Pass"));
+    DEBUG_LOG_PRINTLN(F("ACK Pass"));
     wifiConnected = true;
     digitalWrite(LED, HIGH);
     return true;
@@ -1076,7 +1072,7 @@ void initializeI2C()
 void uploadBatteryInfo()
 {
     // update battery information every 5 days
-    if (batteryLevel == 0 || (batteryInfoUploaded == false && t.mday%5 == 0)) {
+    if (batteryLevel == 0 || (batteryInfoUploaded == false && t.mday%2 == 0)) {
         int newLevel = analogRead(BATTERY);
         if (newLevel < batteryLevel || batteryLevel == 0)
             batteryLevel = newLevel;
@@ -1084,6 +1080,6 @@ void uploadBatteryInfo()
         myFile.print(batteryLevel);
         batteryInfoUploaded = true;
     }
-    else if (t.mday%5!=0)
+    else if (t.mday%2!=0)
         batteryInfoUploaded = false;
 }
